@@ -5,7 +5,7 @@
     "tp2": 4311.9,
     "tp3": 4322.4,
     "sl": 4288.9,
-    "tp1_sent": false,
+    "tp1_sent": true,
     "tp2_sent": false,
     "tp3_sent": false,
     "sl_sent": false
