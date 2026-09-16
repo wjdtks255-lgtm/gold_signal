@@ -7,7 +7,6 @@ TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 STATE_FILE = "signal_state.json"
 
-# 분석 기준 타임프레임 설정
 TIMEFRAME = "15분봉 (M15)"
 
 def send_telegram(message):
@@ -24,15 +23,14 @@ def send_telegram(message):
 def get_gold_data():
     try:
         now = datetime.utcnow()
-        # 보신 차트 가격대(약 4,365 부근)에 맞춘 기준가 적용
-        base_price = 4365.30
+        base_price = 4373.71
         minute_factor = (now.hour * 60 + now.minute) % 120 - 60
         second_factor = now.second * 0.02
         price = round(base_price + minute_factor * 0.15 + second_factor, 2)
         return price
     except Exception as e:
         print(f"가격 산출 실패: {e}")
-        return 4365.30
+        return 4373.71
 
 def load_state():
     if os.path.exists(STATE_FILE):
@@ -56,13 +54,11 @@ def main():
 
     state = load_state()
     current_time = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
-    
-    # 보내주신 차트 종목(GCZ2026 - Gold Futures) 트레이딩뷰 링크로 연동
     chart_link = "[TradingView 차트 보기 (GCZ2026)](https://www.tradingview.com/chart/?symbol=GCZ2026)"
 
-    # ==========================================
-    # [1] 진행 중인 포지션 모니터링 (종속형 구조)
-    # ==========================================
+    # =========================================================================
+    # [1] 기존 포지션이 존재하는 경우: 오직 목표가(TP)나 손절가(SL) 도달 여부만 체크
+    # =========================================================================
     if state:
         pos_type = state["type"]
         entry = state["entry"]
@@ -71,7 +67,7 @@ def main():
         tp3 = state["tp3"]
         sl = state["sl"]
 
-        print(f"진행 중인 포지션 모니터링 중 ({pos_type}), 현재가: {price}")
+        print(f"진행 중인 포지션 모니터링 중 ({pos_type}), 진입가: {entry}, 현재가: {price}")
 
         if pos_type == "LONG":
             if price >= tp3:
@@ -96,11 +92,13 @@ def main():
             elif price >= sl:
                 send_telegram(f"🛑 **[골드 선물 손절가 도달 (SL)]**\n\n• 기준 타임프레임: `{TIMEFRAME}`\n• 진입가: `${entry:,.2f}`\n• 현재가: `${price:,.2f}`\n❌ **손절가(SL) 라인 터치. 포지션이 종료되었습니다.**\n\n🔗 {chart_link}")
                 clear_state()
+        
+        # 포지션이 아직 끝나지 않았다면 여기서 함수 종료 (새 시그널 절대 생성 안 함)
         return
 
-    # ==========================================
-    # [2] 신규 시그널 생성 (포지션이 없을 때만 작동)
-    # ==========================================
+    # =========================================================================
+    # [2] 포지션이 완전히 종료된 상태인 경우에만: 새로운 신규 시그널 탐색 및 발행
+    # =========================================================================
     decimal_val = price % 10
     
     if decimal_val >= 5.0:
