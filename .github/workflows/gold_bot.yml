@@ -1,9 +1,9 @@
 name: 골드 시그널 텔레그램 봇
 
 on:
-  workflow_dispatch: # 수동으로 언제든 실행할 수 있는 버튼 유지
+  workflow_dispatch:
   schedule:
-    - cron: '0 * * * *' # 매 1시간마다 자동 실행 (원하시면 '*/30 * * * *' 등으로 변경 가능)
+    - cron: '*/15 * * * *' # 매 15분마다 가격 감시 및 포지션 관리
 
 jobs:
   run-bot:
@@ -28,10 +28,10 @@ jobs:
         run: |
           python bot.py
 
-      - name: 변경된 상태 파일(signal_state.json) 자동 커밋 및 푸시
+      - name: 포지션 상태 파일(signal_state.json) 변경사항 자동 동기화
         run: |
           git config --global user.name "GitHub Actions Bot"
           git config --global user.email "actions@github.com"
           git add signal_state.json || true
-          git commit -m "Auto-update position state [skip ci]" || true
+          git commit -m "Auto-update position lifecycle state [skip ci]" || true
           git push || true
