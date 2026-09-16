@@ -1,4 +1,5 @@
 import os
+from datetime import datetime
 import requests
 
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
@@ -16,7 +17,6 @@ def send_telegram(message):
 
 def get_gold_price():
     try:
-        # 국제 금(XAU) 또는 골드 선물 가격 API
         url = "https://api.gold-api.com/price/XAU"
         response = requests.get(url, timeout=5)
         data = response.json()
@@ -32,17 +32,42 @@ def check_gold_signal():
         send_telegram("⚠️ 골드 가격 데이터를 불러오는데 실패했습니다.")
         return
 
-    # TODO: 본인만의 매매 로직(이동평균선, RSI 등)을 여기에 구현하시면 됩니다.
-    # 예시: 가격의 소수점 첫째 자리나 변동폭을 이용한 임시 로직
-    # 여기서는 예시로 가격의 소수점 첫째 자리가 5 이상이면 LONG, 미만이면 SHORT으로 지정해 봅니다.
+    # 예시 전략 로직 (추후 본인 지표 로직으로 교체 가능)
     fractional_part = int((price * 10) % 10)
-    signal_type = "LONG 🟢 (매수 우세)" if fractional_part >= 5 else "SHORT 🔴 (매도 우세)"
+    current_time = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
     
+    if fractional_part >= 5:
+        signal_type = "🟢 **LONG POSITION (BUY)**"
+        tp1 = price + 8.0
+        tp2 = price + 15.0
+        tp3 = price + 25.0
+        sl = price - 10.0
+        reason = "Key Support Rebound & Bullish Momentum Confluence"
+    else:
+        signal_type = "🔴 **SHORT POSITION (SELL)**"
+        tp1 = price - 8.0
+        tp2 = price - 15.0
+        tp3 = price - 25.0
+        sl = price + 10.0
+        reason = "Resistance Rejection & Bearish Volume Expansion"
+    
+    # 고급스러운 프로페셔널 메시지 포맷 구성
     message = (
-        f"🥇 **[골드 선물 시그널 알림]**\n\n"
-        f"• 현재 골드 가격: **${price:,.2f} USD**\n"
-        f"• 추천 포지션: **{signal_type}**\n"
-        f"• 상태: 깃허브 액션 정상 작동 중 ✅"
+        f"💎 **XAU/USD TECHNICAL SIGNAL** 💎\n"
+        f"────────────────────────\n"
+        f"⏱ **Time**: `{current_time}`\n"
+        f"📊 **Action**: {signal_type}\n"
+        f"💰 **Entry Zone**: `${price:,.2f}`\n\n"
+        f"🎯 **Take Profit Targets**\n"
+        f"• **TP1**: `${tp1:,.2f}`\n"
+        f"• **TP2**: `${tp2:,.2f}`\n"
+        f"• **TP3**: `${tp3:,.2f}`\n\n"
+        f"🛡 **Stop Loss**\n"
+        f"• **SL**: `${sl:,.2f}`\n\n"
+        f"📈 **Strategy / Reason**\n"
+        f"_{reason}_\n"
+        f"────────────────────────\n"
+        f"⚡ *Powered by GitHub Actions & Python*"
     )
     
     send_telegram(message)
