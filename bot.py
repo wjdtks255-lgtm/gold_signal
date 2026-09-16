@@ -23,12 +23,19 @@ def send_telegram(message):
 
 def get_gold_price():
     try:
-        # 야후 파이낸스에서 실제 금 선물(GC=F) 현재가 가져오기
-        ticker = yf.Ticker("GC=F")
+        # GCZ2026 (2026년 12월물 금 선물) 정확한 야후 파이낸스 계약 심볼
+        ticker = yf.Ticker("GCZ26=F")
         data = ticker.history(period="1d", interval="1m")
         if not data.empty:
             price = data['Close'].iloc[-1]
             return round(price, 2)
+        
+        # 혹시 데이터를 못 가져올 경우를 대비한 백업 심볼
+        ticker_alt = yf.Ticker("GC=F")
+        data_alt = ticker_alt.history(period="1d", interval="1m")
+        if not data_alt.empty:
+            return round(data_alt['Close'].iloc[-1], 2)
+            
         return None
     except Exception as e:
         print(f"실시간 금 가격 조회 실패: {e}")
@@ -59,7 +66,7 @@ def main():
     chart_link = "[TradingView 차트 보기 (GCZ2026)](https://www.tradingview.com/chart/?symbol=GCZ2026)"
 
     # =========================================================================
-    # [1] 기존 포지션이 진행 중인 경우: 목표가(TP) 및 손절가(SL) 도달 여부만 엄격하게 감시
+    # [1] 기존 포지션이 진행 중인 경우: 목표가(TP) 및 손절가(SL) 도달 여부 감시
     # =========================================================================
     if state:
         pos_type = state["type"]
@@ -95,10 +102,10 @@ def main():
                 send_telegram(f"🛑 **[골드 선물 손절가 도달 (SL)]**\n\n• 기준 타임프레임: `{TIMEFRAME}`\n• 진입가: `${entry:,.2f}`\n• 현재가: `${price:,.2f}`\n❌ **손절가(SL) 라인 터치. 포지션이 종료되었습니다.**\n\n🔗 {chart_link}")
                 clear_state()
         
-        return  # 포지션이 끝날 때까지 새로운 시그널 탐색 절대 금지
+        return
 
     # =========================================================================
-    # [2] 기존 포지션이 완전히 끝난(Clear) 경우에만: 새로운 신규 시그널 탐색
+    # [2] 신규 포지션 탐색
     # =========================================================================
     decimal_val = price % 10
     
@@ -153,3 +160,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
