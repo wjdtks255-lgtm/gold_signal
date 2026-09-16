@@ -30,7 +30,7 @@ def get_gold_price():
             price = data['Close'].iloc[-1]
             return round(price, 2)
         
-        # 혹시 데이터를 못 가져올 경우를 대비한 백업 심볼
+        # 백업 심볼
         ticker_alt = yf.Ticker("GC=F")
         data_alt = ticker_alt.history(period="1d", interval="1m")
         if not data_alt.empty:
@@ -66,7 +66,7 @@ def main():
     chart_link = "[TradingView 차트 보기 (GCZ2026)](https://www.tradingview.com/chart/?symbol=GCZ2026)"
 
     # =========================================================================
-    # [1] 기존 포지션이 진행 중인 경우: 목표가(TP) 및 손절가(SL) 도달 여부 감시
+    # [1] 기존 포지션 모니터링 및 단계별 중복 방지 플래그 체크
     # =========================================================================
     if state:
         pos_type = state["type"]
@@ -76,36 +76,54 @@ def main():
         tp3 = state["tp3"]
         sl = state["sl"]
 
+        # 알림 발송 여부 플래그 (기존 파일에 없으면 기본값 False로 설정)
+        tp1_sent = state.get("tp1_sent", False)
+        tp2_sent = state.get("tp2_sent", False)
+        tp3_sent = state.get("tp3_sent", False)
+        sl_sent = state.get("sl_sent", False)
+
         print(f"포지션 모니터링 중 [{pos_type}] | 진입가: {entry} | 현재가: {price}")
 
         if pos_type == "LONG":
-            if price >= tp3:
+            if price >= tp3 and not tp3_sent:
                 send_telegram(f"🎯 **[골드 선물 3차 목표가 도달 (TP3)]**\n\n• 기준 타임프레임: `{TIMEFRAME}`\n• 진입가: `${entry:,.2f}`\n• 현재가: `${price:,.2f}`\n🔥 **TP3 최종 익절 달성! 포지션이 종료되었습니다.** 🚀\n\n🔗 {chart_link}")
                 clear_state()
-            elif price >= tp2:
+                return
+            elif price >= tp2 and not tp2_sent:
                 send_telegram(f"🎯 **[골드 선물 2차 목표가 도달 (TP2)]**\n\n• 기준 타임프레임: `{TIMEFRAME}`\n• 진입가: `${entry:,.2f}`\n• 현재가: `${price:,.2f}`\n✨ **TP2 도달! 본절가로 스탑로스(SL) 이동 추천!**\n\n🔗 {chart_link}")
-            elif price >= tp1:
+                state["tp2_sent"] = True
+                save_state(state)
+            elif price >= tp1 and not tp1_sent:
                 send_telegram(f"🎯 **[골드 선물 1차 목표가 도달 (TP1)]**\n\n• 기준 타임프레임: `{TIMEFRAME}`\n• 진입가: `${entry:,.2f}`\n• 현재가: `${price:,.2f}`\n📈 **TP1 도달! 일부 익절 구간입니다.**\n\n🔗 {chart_link}")
-            elif price <= sl:
+                state["tp1_sent"] = True
+                save_state(state)
+            elif price <= sl and not sl_sent:
                 send_telegram(f"🛑 **[골드 선물 손절가 도달 (SL)]**\n\n• 기준 타임프레임: `{TIMEFRAME}`\n• 진입가: `${entry:,.2f}`\n• 현재가: `${price:,.2f}`\n❌ **손절가(SL) 라인 터치. 포지션이 종료되었습니다.**\n\n🔗 {chart_link}")
                 clear_state()
+                return
 
         elif pos_type == "SHORT":
-            if price <= tp3:
+            if price <= tp3 and not tp3_sent:
                 send_telegram(f"🎯 **[골드 선물 3차 목표가 도달 (TP3)]**\n\n• 기준 타임프레임: `{TIMEFRAME}`\n• 진입가: `${entry:,.2f}`\n• 현재가: `${price:,.2f}`\n🔥 **TP3 최종 익절 달성! 포지션이 종료되었습니다.** 🚀\n\n🔗 {chart_link}")
                 clear_state()
-            elif price <= tp2:
+                return
+            elif price <= tp2 and not tp2_sent:
                 send_telegram(f"🎯 **[골드 선물 2차 목표가 도달 (TP2)]**\n\n• 기준 타임프레임: `{TIMEFRAME}`\n• 진입가: `${entry:,.2f}`\n• 현재가: `${price:,.2f}`\n✨ **TP2 도달! 본절가로 스탑로스(SL) 이동 추천!**\n\n🔗 {chart_link}")
-            elif price <= tp1:
+                state["tp2_sent"] = True
+                save_state(state)
+            elif price <= tp1 and not tp1_sent:
                 send_telegram(f"🎯 **[골드 선물 1차 목표가 도달 (TP1)]**\n\n• 기준 타임프레임: `{TIMEFRAME}`\n• 진입가: `${entry:,.2f}`\n• 현재가: `${price:,.2f}`\n📈 **TP1 도달! 일부 익절 구간입니다.**\n\n🔗 {chart_link}")
-            elif price >= sl:
+                state["tp1_sent"] = True
+                save_state(state)
+            elif price >= sl and not sl_sent:
                 send_telegram(f"🛑 **[골드 선물 손절가 도달 (SL)]**\n\n• 기준 타임프레임: `{TIMEFRAME}`\n• 진입가: `${entry:,.2f}`\n• 현재가: `${price:,.2f}`\n❌ **손절가(SL) 라인 터치. 포지션이 종료되었습니다.**\n\n🔗 {chart_link}")
                 clear_state()
+                return
         
         return
 
     # =========================================================================
-    # [2] 신규 포지션 탐색
+    # [2] 신규 포지션 탐색 (기존 포지션이 완전히 끝났을 때만 실행)
     # =========================================================================
     decimal_val = price % 10
     
@@ -132,7 +150,11 @@ def main():
         "tp1": tp1,
         "tp2": tp2,
         "tp3": tp3,
-        "sl": sl
+        "sl": sl,
+        "tp1_sent": False,
+        "tp2_sent": False,
+        "tp3_sent": False,
+        "sl_sent": False
     }
     save_state(new_state)
 
