@@ -21,18 +21,21 @@ def send_telegram(message):
     response = requests.post(url, json=payload)
     return response.json()
 
-def get_gold_price():
+def get_market_data():
     try:
-        # 야후 파이낸스 금 선물 연속 계약 심볼 (가장 안정적)
         ticker = yf.Ticker("GC=F")
         data = ticker.history(period="1d", interval="1m")
-        if not data.empty:
+        if len(data) >= 2:
+            prev_price = data['Close'].iloc[-2]
+            current_price = data['Close'].iloc[-1]
+            return round(prev_price, 2), round(current_price, 2)
+        elif not data.empty:
             price = data['Close'].iloc[-1]
-            return round(price, 2)
-        return None
+            return round(price, 2), round(price, 2)
+        return None, None
     except Exception as e:
         print(f"실시간 금 가격 조회 실패: {e}")
-        return None
+        return None, None
 
 def load_state():
     if os.path.exists(STATE_FILE):
@@ -49,7 +52,7 @@ def clear_state():
         os.remove(STATE_FILE)
 
 def main():
-    price = get_gold_price()
+    prev_price, price = get_market_data()
     if not price:
         print("금 가격을 가져오지 못했습니다.")
         return
@@ -59,7 +62,7 @@ def main():
     chart_link = "[TradingView 차트 보기 (GCZ2026)](https://www.tradingview.com/chart/?symbol=GCZ2026)"
 
     # =========================================================================
-    # [1] 기존 포지션 모니터링 및 독립 조건 검사 플래그 로직
+    # [1] 기존 포지션 모니터링 (독립 조건문)
     # =========================================================================
     if state:
         pos_type = state["type"]
@@ -129,18 +132,16 @@ def main():
         return
 
     # =========================================================================
-    # [2] 신규 포지션 탐색 (기존 포지션이 완전히 끝났을 때만 실행)
+    # [2] 신규 포지션 탐색 (이전 봉 대비 추세 방향 판별)
     # =========================================================================
-    decimal_val = price % 10
-    
-    if decimal_val >= 5.0:
+    if price >= prev_price:
         pos_type = "LONG"
         action_text = "🟢 **롱 포지션 (매수 진입)**"
         tp1 = price + 6.5
         tp2 = price + 14.0
         tp3 = price + 24.5
         sl = price - 9.0
-        reason = "핵심 지지선 반등 및 상승 오더블록 수렴 구간 포착"
+        reason = "단기 상승 추세 및 지지선 반등 오더블록 포착"
     else:
         pos_type = "SHORT"
         action_text = "🔴 **숏 포지션 (매도 진입)**"
@@ -148,7 +149,7 @@ def main():
         tp2 = price - 14.0
         tp3 = price - 24.5
         sl = price + 9.0
-        reason = "주요 저항선 거부 및 매도 유동성 스윕 발생"
+        reason = "단기 하락 추세 및 주요 저항선 매도 압력 포착"
 
     new_state = {
         "type": pos_type,
@@ -188,4 +189,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
