@@ -23,19 +23,12 @@ def send_telegram(message):
 
 def get_gold_price():
     try:
-        # GCZ2026 (2026년 12월물 금 선물) 정확한 야후 파이낸스 계약 심볼
-        ticker = yf.Ticker("GCZ26=F")
+        # 야후 파이낸스에서 가장 안정적인 금 선물 연속 계약 심볼 사용
+        ticker = yf.Ticker("GC=F")
         data = ticker.history(period="1d", interval="1m")
         if not data.empty:
             price = data['Close'].iloc[-1]
             return round(price, 2)
-        
-        # 백업 심볼
-        ticker_alt = yf.Ticker("GC=F")
-        data_alt = ticker_alt.history(period="1d", interval="1m")
-        if not data_alt.empty:
-            return round(data_alt['Close'].iloc[-1], 2)
-            
         return None
     except Exception as e:
         print(f"실시간 금 가격 조회 실패: {e}")
@@ -76,7 +69,6 @@ def main():
         tp3 = state["tp3"]
         sl = state["sl"]
 
-        # 알림 발송 여부 플래그 (기존 파일에 없으면 기본값 False로 설정)
         tp1_sent = state.get("tp1_sent", False)
         tp2_sent = state.get("tp2_sent", False)
         tp3_sent = state.get("tp3_sent", False)
