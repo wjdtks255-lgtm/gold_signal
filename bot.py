@@ -13,7 +13,7 @@ def send_telegram(message):
         "chat_id": TELEGRAM_CHAT_ID,
         "text": message,
         "parse_mode": "Markdown",
-        "disable_web_page_preview": True  # 링크 미리보기 깔끔하게 숨기기
+        "disable_web_page_preview": True  # 링크 미리보기 숨기기
     }
     response = requests.post(url, json=payload)
     return response.json()
@@ -53,7 +53,7 @@ def main():
     state = load_state()
     current_time = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
     
-    # 트레이딩뷰 골드 선물 차트 링크 (OANDA:XAUUSD 또는 TVC:GOLD 등)
+    # 트레이딩뷰 골드 선물 차트 링크
     chart_link = "[TradingView 차트 보기](https://www.tradingview.com/chart/?symbol=OANDA%3AXAUUSD)"
 
     # 1. 진행 중인 포지션 모니터링 (TP / SL 도달 체크)
@@ -123,7 +123,7 @@ def main():
     }
     save_state(new_state)
 
-    # 전체 한글화된 전문 시그널 메시지 발송 (차트 링크 포함)
+    # 전체 한글화된 전문 시그널 메시지 발송
     message = (
         f"💎 **[XAU/USD 실시간 기술적 분석 시그널]** 💎\n"
         f"────────────────────────\n"
