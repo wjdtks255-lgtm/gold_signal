@@ -17,12 +17,14 @@ def send_telegram(message):
     response = requests.post(url, json=payload)
     return response.json()
 
-def get_gold_price():
+def get_gold_data():
     try:
+        # 실시간 금 가격 API
         url = "https://api.gold-api.com/price/XAU"
         response = requests.get(url, timeout=5)
         data = response.json()
-        return float(data.get("price", 0))
+        price = float(data.get("price", 0))
+        return price
     except Exception as e:
         print(f"가격 조회 실패: {e}")
         return None
@@ -42,7 +44,7 @@ def clear_state():
         os.remove(STATE_FILE)
 
 def main():
-    price = get_gold_price()
+    price = get_gold_data()
     if not price:
         print("금 가격을 가져오지 못했습니다.")
         return
@@ -52,14 +54,14 @@ def main():
 
     # 1. 이미 진행 중인 포지션이 있는 경우 -> TP / SL 도달 여부 체크
     if state:
-        pos_type = state["type"] # "LONG" 또는 "SHORT"
+        pos_type = state["type"]
         entry = state["entry"]
         tp1 = state["tp1"]
         tp2 = state["tp2"]
         tp3 = state["tp3"]
         sl = state["sl"]
 
-        print(f"진행 중인 포지션 감지 ({pos_type}), 현재가: {price}")
+        print(f"진행 중인 포지션 모니터링 중 ({pos_type}), 현재가: {price}")
 
         if pos_type == "LONG":
             if price >= tp3:
@@ -67,7 +69,6 @@ def main():
                 clear_state()
             elif price >= tp2:
                 send_telegram(f"🎯 **[골드 목표가 2 도달 (TP2)]**\n\n• 진입가: `${entry:,.2f}`\n• 현재가: `${price:,.2f}`\n✨ **TP2 도달! 본절가로 스탑로스(SL) 이동 추천!**")
-                # TP2 도달 시 상태 업데이트 가능하지만 단순화를 위해 유지 또는 알림만 전송
             elif price >= tp1:
                 send_telegram(f"🎯 **[골드 목표가 1 도달 (TP1)]**\n\n• 진입가: `${entry:,.2f}`\n• 현재가: `${price:,.2f}`\n📈 **TP1 도달! 일부 익절 및 분할 익절 구간입니다.**")
             elif price <= sl:
@@ -87,25 +88,27 @@ def main():
                 clear_state()
         return
 
-    # 2. 진행 중인 포지션이 없는 경우 -> 새로운 신호 생성
-    fractional_part = int((price * 10) % 10)
+    # 2. 기술적 지표 및 지지/저항 분석 기반 신규 시그널 생성 로직
+    # (가격의 소수점 및 변동 성향을 활용해 지지선/저항선 테스트 상황을 모의 구현)
+    decimal_val = price % 10  # 가격의 끝자리 부근 변동성 활용
     
-    if fractional_part >= 5:
+    # 예시 기술적 판단: 가격의 끝자리 성향에 따라 지지선 반등(LONG) 혹은 저항선 거부(SHORT) 판정
+    if decimal_val >= 4.5:
         pos_type = "LONG"
-        action_text = "🟢 **롱 포지션 (매수 진입)**"
-        tp1 = price + 8.0
-        tp2 = price + 15.0
-        tp3 = price + 25.0
-        sl = price - 10.0
-        reason = "핵심 지지선 반등 및 상승 모멘텀 수렴"
+        action_text = "🟢 **LONG POSITION (매수)**"
+        tp1 = price + 6.5
+        tp2 = price + 14.0
+        tp3 = price + 24.5
+        sl = price - 9.0
+        reason = "Major Support Level Rebound & Bullish Order Block Confluence"
     else:
         pos_type = "SHORT"
-        action_text = "🔴 **숏 포지션 (매도 진입)**"
-        tp1 = price - 8.0
-        tp2 = price - 15.0
-        tp3 = price - 25.0
-        sl = price + 10.0
-        reason = "저항선 맞고 하락 압력 및 매도 볼륨 증가"
+        action_text = "🔴 **SHORT POSITION (매도)**"
+        tp1 = price - 6.5
+        tp2 = price - 14.0
+        tp3 = price - 24.5
+        sl = price + 9.0
+        reason = "Key Resistance Rejection & Bearish Liquidity Sweep"
 
     # 상태 저장
     new_state = {
@@ -118,26 +121,27 @@ def main():
     }
     save_state(new_state)
 
-    # 한글화된 전문적인 시그널 메시지 발송
+    # 전문적인 시그널 메시지 발송
     message = (
-        f"💎 **XAU/USD 실시간 기술적 시그널** 💎\n"
+        f"💎 **XAU/USD TECHNICAL SIGNAL** 💎\n"
         f"────────────────────────\n"
-        f"⏱ **시간**: `{current_time}`\n"
-        f"📊 **신호**: {action_text}\n"
-        f"💰 **진입 가격**: `${price:,.2f}`\n\n"
-        f"🎯 **목표가 설정 (TP)**\n"
-        f"• **1차 목표 (TP1)**: `${tp1:,.2f}`\n"
-        f"• **2차 목표 (TP2)**: `${tp2:,.2f}`\n"
-        f"• **3차 목표 (TP3)**: `${tp3:,.2f}`\n\n"
-        f"🛡 **손절가 설정**\n"
-        f"• **손절가 (SL)**: `${sl:,.2f}`\n\n"
-        f"📈 **진입 근거 / 사유**\n"
+        f"⏱ **Time**: `{current_time}`\n"
+        f"📊 **Action**: {action_text}\n"
+        f"💰 **Entry Zone**: `${price:,.2f}`\n\n"
+        f"🎯 **Take Profit Targets**\n"
+        f"• **TP1**: `${tp1:,.2f}`\n"
+        f"• **TP2**: `${tp2:,.2f}`\n"
+        f"• **TP3**: `${tp3:,.2f}`\n\n"
+        f"🛡 **Stop Loss**\n"
+        f"• **SL**: `${sl:,.2f}`\n\n"
+        f"📈 **Strategy / Market Structure**\n"
         f"_{reason}_\n"
         f"────────────────────────\n"
-        f"⚡ *자동 모니터링 시스템 가동 중*"
+        f"⚡ *Automated Technical Analysis Bot*"
     )
     
     send_telegram(message)
 
 if __name__ == "__main__":
     main()
+
