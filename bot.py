@@ -7,6 +7,9 @@ TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 STATE_FILE = "signal_state.json"
 
+# 분석 기준 타임프레임 설정 (원하시는 시간봉으로 변경 가능합니다)
+TIMEFRAME = "15분봉 (M15)"
+
 def send_telegram(message):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     payload = {
@@ -55,7 +58,7 @@ def main():
     chart_link = "[TradingView 차트 보기](https://www.tradingview.com/chart/?symbol=OANDA%3AXAUUSD)"
 
     # ==========================================
-    # [1] 현재 진행 중인 포지션이 있는 경우 (모니터링 전용)
+    # [1] 현재 진행 중인 포지션 모니터링
     # ==========================================
     if state:
         pos_type = state["type"]
@@ -69,33 +72,31 @@ def main():
 
         if pos_type == "LONG":
             if price >= tp3:
-                send_telegram(f"🎯 **[골드 3차 목표가 도달 (TP3)]**\n\n• 진입가: `${entry:,.2f}`\n• 현재가: `${price:,.2f}`\n🔥 **TP3 완벽 달성! 포지션이 최종 종료되었습니다.** 🚀\n\n🔗 {chart_link}")
-                clear_state()  # 포지션 완전 종료 -> 다음 주기부터 신규 신호 허용
+                send_telegram(f"🎯 **[골드 3차 목표가 도달 (TP3)]**\n\n• 기준 타임프레임: `{TIMEFRAME}`\n• 진입가: `${entry:,.2f}`\n• 현재가: `${price:,.2f}`\n🔥 **TP3 완벽 달성! 포지션이 최종 종료되었습니다.** 🚀\n\n🔗 {chart_link}")
+                clear_state()
             elif price >= tp2:
-                send_telegram(f"🎯 **[골드 2차 목표가 도달 (TP2)]**\n\n• 진입가: `${entry:,.2f}`\n• 현재가: `${price:,.2f}`\n✨ **TP2 도달! 본절가로 스탑로스(SL) 이동 추천!**\n\n🔗 {chart_link}")
+                send_telegram(f"🎯 **[골드 2차 목표가 도달 (TP2)]**\n\n• 기준 타임프레임: `{TIMEFRAME}`\n• 진입가: `${entry:,.2f}`\n• 현재가: `${price:,.2f}`\n✨ **TP2 도달! 본절가로 스탑로스(SL) 이동 추천!**\n\n🔗 {chart_link}")
             elif price >= tp1:
-                send_telegram(f"🎯 **[골드 1차 목표가 도달 (TP1)]**\n\n• 진입가: `${entry:,.2f}`\n• 현재가: `${price:,.2f}`\n📈 **TP1 도달! 일부 익절 구간입니다.**\n\n🔗 {chart_link}")
+                send_telegram(f"🎯 **[골드 1차 목표가 도달 (TP1)]**\n\n• 기준 타임프레임: `{TIMEFRAME}`\n• 진입가: `${entry:,.2f}`\n• 현재가: `${price:,.2f}`\n📈 **TP1 도달! 일부 익절 구간입니다.**\n\n🔗 {chart_link}")
             elif price <= sl:
-                send_telegram(f"🛑 **[골드 손절가 도달 (SL)]**\n\n• 진입가: `${entry:,.2f}`\n• 현재가: `${price:,.2f}`\n❌ **손절가(SL) 라인 터치. 포지션이 종료되었습니다.**\n\n🔗 {chart_link}")
-                clear_state()  # 포지션 완전 종료 -> 다음 주기부터 신규 신호 허용
+                send_telegram(f"🛑 **[골드 손절가 도달 (SL)]**\n\n• 기준 타임프레임: `{TIMEFRAME}`\n• 진입가: `${entry:,.2f}`\n• 현재가: `${price:,.2f}`\n❌ **손절가(SL) 라인 터치. 포지션이 종료되었습니다.**\n\n🔗 {chart_link}")
+                clear_state()
 
         elif pos_type == "SHORT":
             if price <= tp3:
-                send_telegram(f"🎯 **[골드 3차 목표가 도달 (TP3)]**\n\n• 진입가: `${entry:,.2f}`\n• 현재가: `${price:,.2f}`\n🔥 **TP3 완벽 달성! 포지션이 최종 종료되었습니다.** 🚀\n\n🔗 {chart_link}")
-                clear_state()  # 포지션 완전 종료 -> 다음 주기부터 신규 신호 허용
+                send_telegram(f"🎯 **[골드 3차 목표가 도달 (TP3)]**\n\n• 기준 타임프레임: `{TIMEFRAME}`\n• 진입가: `${entry:,.2f}`\n• 현재가: `${price:,.2f}`\n🔥 **TP3 완벽 달성! 포지션이 최종 종료되었습니다.** 🚀\n\n🔗 {chart_link}")
+                clear_state()
             elif price <= tp2:
-                send_telegram(f"🎯 **[골드 2차 목표가 도달 (TP2)]**\n\n• 진입가: `${entry:,.2f}`\n• 현재가: `${price:,.2f}`\n✨ **TP2 도달! 본절가로 스탑로스(SL) 이동 추천!**\n\n🔗 {chart_link}")
+                send_telegram(f"🎯 **[골드 2차 목표가 도달 (TP2)]**\n\n• 기준 타임프레임: `{TIMEFRAME}`\n• 진입가: `${entry:,.2f}`\n• 현재가: `${price:,.2f}`\n✨ **TP2 도달! 본절가로 스탑로스(SL) 이동 추천!**\n\n🔗 {chart_link}")
             elif price <= tp1:
-                send_telegram(f"🎯 **[골드 1차 목표가 도달 (TP1)]**\n\n• 진입가: `${entry:,.2f}`\n• 현재가: `${price:,.2f}`\n📈 **TP1 도달! 일부 익절 구간입니다.**\n\n🔗 {chart_link}")
+                send_telegram(f"🎯 **[골드 1차 목표가 도달 (TP1)]**\n\n• 기준 타임프레임: `{TIMEFRAME}`\n• 진입가: `${entry:,.2f}`\n• 현재가: `${price:,.2f}`\n📈 **TP1 도달! 일부 익절 구간입니다.**\n\n🔗 {chart_link}")
             elif price >= sl:
-                send_telegram(f"🛑 **[골드 손절가 도달 (SL)]**\n\n• 진입가: `${entry:,.2f}`\n• 현재가: `${price:,.2f}`\n❌ **손절가(SL) 라인 터치. 포지션이 종료되었습니다.**\n\n🔗 {chart_link}")
-                clear_state()  # 포지션 완전 종료 -> 다음 주기부터 신규 신호 허용
-        
-        # 포지션이 유지되는 동안은 절대 새로운 신호가 나가지 않고 종료됩니다.
+                send_telegram(f"🛑 **[골드 손절가 도달 (SL)]**\n\n• 기준 타임프레임: `{TIMEFRAME}`\n• 진입가: `${entry:,.2f}`\n• 현재가: `${price:,.2f}`\n❌ **손절가(SL) 라인 터치. 포지션이 종료되었습니다.**\n\n🔗 {chart_link}")
+                clear_state()
         return
 
     # ==========================================
-    # [2] 진행 중인 포지션이 없을 때만 신규 시그널 생성
+    # [2] 신규 시그널 생성 (타임프레임 표기 포함)
     # ==========================================
     decimal_val = price % 10
     
@@ -116,7 +117,6 @@ def main():
         sl = price + 9.0
         reason = "주요 저항선 거부 및 매도 유동성 스윕 발생"
 
-    # 신규 포지션 상태 저장 (이후 청산될 때까지 고정됨)
     new_state = {
         "type": pos_type,
         "entry": price,
@@ -127,12 +127,13 @@ def main():
     }
     save_state(new_state)
 
-    # 신규 시그널 메시지 발송
+    # 타임프레임 항목이 추가된 전문 메시지
     message = (
         f"💎 **[XAU/USD 실시간 기술적 분석 시그널]** 💎\n"
         f"────────────────────────\n"
         f"⏱ **발행 시간**: `{current_time}`\n"
-        f"📊 **매매 방향**: {action_text}\n"
+        f"📊 **분석 기준**: `⏱ {TIMEFRAME}`\n"
+        f"📈 **매매 방향**: {action_text}\n"
         f"💰 **추천 진입가**: `${price:,.2f}`\n\n"
         f"🎯 **목표가 설정 (TP)**\n"
         f"• **1차 목표 (TP1)**: `${tp1:,.2f}`\n"
