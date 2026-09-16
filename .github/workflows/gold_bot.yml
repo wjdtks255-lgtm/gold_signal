@@ -1,9 +1,12 @@
-name: 골드 시그널 텔레그램 봇
+name: 골드 신호 텔레그램 봇
 
 on:
   workflow_dispatch:
   schedule:
-    - cron: '*/15 * * * *' # 매 15분마다 가격 감시 및 포지션 관리
+    - cron: '*/15 * * * *' # 매 15분마다 실행
+
+permissions:
+  contents: write # 깃허브 레포지토리에 상태 파일(signal_state.json) 변경 권한 부여
 
 jobs:
   run-bot:
@@ -19,7 +22,7 @@ jobs:
 
       - name: 필수 라이브러리 설치
         run: |
-          pip install requests
+          pip install requests yfinance
 
       - name: 봇 스크립트 실행
         env:
@@ -28,7 +31,7 @@ jobs:
         run: |
           python bot.py
 
-      - name: 포지션 상태 파일(signal_state.json) 변경사항 자동 동기화
+      - name: 포지션 상태 파일 변경사항 자동 동기화
         run: |
           git config --global user.name "GitHub Actions Bot"
           git config --global user.email "actions@github.com"
