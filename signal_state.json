@@ -1,0 +1,12 @@
+{
+    "type": "LONG",
+    "entry": 4389.0,
+    "tp1": 4395.5,
+    "tp2": 4403.0,
+    "tp3": 4413.5,
+    "sl": 4380.0,
+    "tp1_sent": false,
+    "tp2_sent": false,
+    "tp3_sent": false,
+    "sl_sent": false
+}
