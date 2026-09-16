@@ -1,0 +1,12 @@
+{
+    "type": "SHORT",
+    "entry": 4337.0,
+    "tp1": 4330.5,
+    "tp2": 4323.0,
+    "tp3": 4312.5,
+    "sl": 4346.0,
+    "tp1_sent": false,
+    "tp2_sent": false,
+    "tp3_sent": false,
+    "sl_sent": false
+}
