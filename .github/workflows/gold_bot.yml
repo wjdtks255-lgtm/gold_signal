@@ -1,12 +1,12 @@
-name: 골드 신호 텔레그램 봇
+name: 골드 선물 봇
 
 on:
-  workflow_dispatch:
   schedule:
-    - cron: '*/15 * * * *' # 매 15분마다 실행
+    - cron: '*/5 * * * *'  # 5분마다 실행 (깃허브 액션 최소 허용 주기)
+  workflow_dispatch:      # 수동 실행 버튼 활성화
 
 permissions:
-  contents: write # 깃허브 레포지토리에 상태 파일(signal_state.json) 변경 권한 부여
+  contents: write         # signal_state.json 자동 커밋을 위한 권한
 
 jobs:
   run-bot:
@@ -38,3 +38,4 @@ jobs:
           git add signal_state.json || true
           git commit -m "Auto-update position lifecycle state [skip ci]" || true
           git push || true
+
