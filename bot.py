@@ -80,7 +80,7 @@ def main():
         print(f"포지션 모니터링 중 [{pos_type}] | 진입가: {entry} | 현재가: {price} (Low: {low_price}, High: {high_price})")
 
         if pos_type == "LONG":
-            # 1. 손절가 (SL) 체크 (최저가가 SL 이하로 내려갔었는지 확인)
+            # 1. 손절가 (SL) 체크
             if low_price <= sl and not sl_sent:
                 send_telegram(f"🛑 **[골드 선물 손절가 도달 (SL)]**\n\n• 기준 타임프레임: `{TIMEFRAME}`\n• 진입가: `${entry:,.2f}`\n• 도달 저가: `${low_price:,.2f}`\n❌ **손절가(SL) 라인 터치. 포지션이 종료되었습니다.**\n\n🔗 {chart_link}")
                 clear_state()
@@ -105,13 +105,13 @@ def main():
                 save_state(state)
 
         elif pos_type == "SHORT":
-            # 1. 손절가 (SL) 체크 (최고가가 SL 이상으로 올라갔었는지 확인)
+            # 1. 손절가 (SL) 체크 (숏은 가격이 올라가야 손절)
             if high_price >= sl and not sl_sent:
                 send_telegram(f"🛑 **[골드 선물 손절가 도달 (SL)]**\n\n• 기준 타임프레임: `{TIMEFRAME}`\n• 진입가: `${entry:,.2f}`\n• 도달 고가: `${high_price:,.2f}`\n❌ **손절가(SL) 라인 터치. 포지션이 종료되었습니다.**\n\n🔗 {chart_link}")
                 clear_state()
                 return
 
-            # 2. 3차 목표가 (TP3) 체크
+            # 2. 3차 목표가 (TP3) 체크 (숏은 가격이 내려가야 익절)
             if low_price <= tp3 and not tp3_sent:
                 send_telegram(f"🎯 **[골드 선물 3차 목표가 도달 (TP3)]**\n\n• 기준 타임프레임: `{TIMEFRAME}`\n• 진입가: `${entry:,.2f}`\n• 도달 저가: `${low_price:,.2f}`\n🔥 **TP3 최종 익절 달성! 포지션이 종료되었습니다.** 🚀\n\n🔗 {chart_link}")
                 clear_state()
@@ -132,7 +132,7 @@ def main():
         return
 
     # =========================================================================
-    # [2] 신규 포지션 탐색
+    # [2] 신규 포지션 탐색 (롱/숏 방향에 따른 정확한 TP/SL 가격 산출)
     # =========================================================================
     if price >= prev_price:
         pos_type = "LONG"
