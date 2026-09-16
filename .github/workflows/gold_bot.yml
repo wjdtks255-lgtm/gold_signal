@@ -1,29 +1,6 @@
-name: Gold Signal Telegram Bot
+name: 골드 시그널 텔레그램 봇
 
 on:
+  workflow_dispatch: # 수동으로 언제든 누를 수 있는 버튼 유지
   schedule:
-    - cron: '0 */3 * * *'
-  workflow_dispatch:
-
-jobs:
-  run-bot:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.10'
-
-      - name: Install dependencies
-        run: |
-          pip install requests
-
-      - name: Run bot script
-        env:
-          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
-          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-        run: |
-          python bot.py
+    - cron: '0 * * * *' # 매 정각(1시간마다) 자동으로 실행
