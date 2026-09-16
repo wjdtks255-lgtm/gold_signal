@@ -1,6 +1,37 @@
 name: 골드 시그널 텔레그램 봇
 
 on:
-  workflow_dispatch: # 수동으로 언제든 누를 수 있는 버튼 유지
+  workflow_dispatch: # 수동으로 언제든 실행할 수 있는 버튼 유지
   schedule:
-    - cron: '0 * * * *' # 매 정각(1시간마다) 자동으로 실행
+    - cron: '0 * * * *' # 매 1시간마다 자동 실행 (원하시면 '*/30 * * * *' 등으로 변경 가능)
+
+jobs:
+  run-bot:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 소스코드 체크아웃
+        uses: actions/checkout@v3
+
+      - name: Python 설정
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: 필수 라이브러리 설치
+        run: |
+          pip install requests
+
+      - name: 봇 스크립트 실행
+        env:
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          python bot.py
+
+      - name: 변경된 상태 파일(signal_state.json) 자동 커밋 및 푸시
+        run: |
+          git config --global user.name "GitHub Actions Bot"
+          git config --global user.email "actions@github.com"
+          git add signal_state.json || true
+          git commit -m "Auto-update position state [skip ci]" || true
+          git push || true
