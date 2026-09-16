@@ -19,13 +19,29 @@ def send_telegram(message):
 
 def get_gold_data():
     try:
-        url = "https://api.gold-api.com/price/XAU"
-        response = requests.get(url, timeout=5)
+        # 안정적인 대체 금 시세 API (metals-api 계열 또는 오픈 금 가격 API)
+        url = "https://data-asg.goldprice.org/dbXRates/USD"
+        headers = {"User-Agent": "Mozilla/5.0"}
+        response = requests.get(url, headers=headers, timeout=5)
         data = response.json()
-        price = float(data.get("price", 0))
+        
+        # goldprice.org 구조에서 온스당 골드 가격(items 배열의 첫 번째 값 xauPrice) 추출
+        price = float(data["items"][0]["xauPrice"])
         return price
     except Exception as e:
-        print(f"가격 조회 실패: {e}")
+        print(f"1차 API 조회 실패 ({e}), 백업 API 시도 중...")
+        try:
+            # 백업용 다른 무료 API
+            url_backup = "https://api.metals.live/v1/spot/gold"
+            response = requests.get(url_backup, timeout=5)
+            data = response.json()
+            # [{ 'price': ... }] 형태인 경우 처리
+            if isinstance(data, list):
+                return float(data[0].get("price", 0))
+            elif isinstance(data, dict):
+                return float(data.get("price", 0))
+        except Exception as e2:
+            print(f"백업 API 조회도 실패: {e2}")
         return None
 
 def load_state():
@@ -46,6 +62,7 @@ def main():
     price = get_gold_data()
     if not price:
         print("금 가격을 가져오지 못했습니다.")
+        send_telegram("⚠️ **[시스템 경고]** 외부 금 시세 API 연결 실패로 이번 회차 시그널 산출을 건너뜁니다.")
         return
 
     state = load_state()
@@ -141,4 +158,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
