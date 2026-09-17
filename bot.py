@@ -24,19 +24,23 @@ def send_telegram(message):
 def get_market_data():
     try:
         ticker = yf.Ticker("GC=F")
-        data = ticker.history(period="2d", interval="15m")
-        if len(data) >= 20:
+        data = ticker.history(period="3d", interval="15m")
+        if len(data) >= 25:
             latest = data.iloc[-1]
             current_price = latest['Close']
             low_price = latest['Low']
             high_price = latest['High']
-            # 20 이동평균선(SMA) 계산으로 추세 판단
-            sma20 = data['Close'].rolling(window=20).mean().iloc[-1]
-            return round(current_price, 2), round(low_price, 2), round(high_price, 2), round(sma20, 2)
-        return None, None, None, None
+            
+            # 20일 이동평균선 및 이평선 기울기(방향) 계산용 데이터
+            sma20_series = data['Close'].rolling(window=20).mean()
+            sma20 = sma20_series.iloc[-1]
+            sma20_prev = sma20_series.iloc[-3]  # 3봉 전 이평선 (기울기 판단용)
+            
+            return round(current_price, 2), round(low_price, 2), round(high_price, 2), round(sma20, 2), round(sma20_prev, 2)
+        return None, None, None, None, None
     except Exception as e:
         print(f"실시간 금 가격 조회 실패: {e}")
-        return None, None, None, None
+        return None, None, None, None, None
 
 def load_state():
     if os.path.exists(STATE_FILE):
@@ -45,7 +49,7 @@ def load_state():
     return None
 
 def save_state(state):
-    with open(STATE_FILE, "w") as f:
+    with open(STATE_FILE, "w", encoding="utf-8") as f:
         json.dump(state, f, indent=4)
 
 def clear_state():
@@ -53,7 +57,7 @@ def clear_state():
         os.remove(STATE_FILE)
 
 def main():
-    price, low_price, high_price, sma20 = get_market_data()
+    price, low_price, high_price, sma20, sma20_prev = get_market_data()
     if not price:
         print("금 가격을 가져오지 못했습니다.")
         return
@@ -78,72 +82,71 @@ def main():
         tp3_sent = state.get("tp3_sent", False)
         sl_sent = state.get("sl_sent", False)
 
-        print(f"포지션 모니터링 중 [{pos_type}] | 진입가: {entry} | 현재가: {price} (Low: {low_price}, High: {high_price})")
-
         if pos_type == "LONG":
             if low_price <= sl and not sl_sent:
-                send_telegram(f"🛑 **[골드 선물 손절가 도달 (SL)]**\n\n• 기준 타임프레임: `{TIMEFRAME}`\n• 진입가: `${entry:,.2f}`\n• 도달 저가: `${low_price:,.2f}`\n❌ **손절가(SL) 라인 터치. 포지션이 종료되었습니다.**\n\n🔗 {chart_link}")
+                send_telegram(f"🛑 **[골드 선물 손절가 도달 (SL)]**\n\n• 진입가: `${entry:,.2f}`\n• 도달 저가: `${low_price:,.2f}`\n❌ **손절가 터치로 포지션 종료.**\n\n🔗 {chart_link}")
                 clear_state()
                 return
-
             if high_price >= tp3 and not tp3_sent:
-                send_telegram(f"🎯 **[골드 선물 3차 목표가 도달 (TP3)]**\n\n• 기준 타임프레임: `{TIMEFRAME}`\n• 진입가: `${entry:,.2f}`\n• 도달 고가: `${high_price:,.2f}`\n🔥 **TP3 최종 익절 달성! 포지션이 종료되었습니다.** 🚀\n\n🔗 {chart_link}")
+                send_telegram(f"🎯 **[골드 선물 3차 목표가 도달 (TP3)]**\n\n• 진입가: `${entry:,.2f}`\n🔥 **TP3 최종 익절 달성!** 🚀\n\n🔗 {chart_link}")
                 clear_state()
                 return
-
             if high_price >= tp2 and not tp2_sent:
-                send_telegram(f"🎯 **[골드 선물 2차 목표가 도달 (TP2)]**\n\n• 기준 타임프레임: `{TIMEFRAME}`\n• 진입가: `${entry:,.2f}`\n• 도달 고가: `${high_price:,.2f}`\n✨ **TP2 도달! 본절가로 스탑로스(SL) 이동 추천!**\n\n🔗 {chart_link}")
+                send_telegram(f"🎯 **[골드 선물 2차 목표가 도달 (TP2)]**\n\n• 진입가: `${entry:,.2f}`\n✨ **본절가로 스탑로스(SL) 이동 추천!**\n\n🔗 {chart_link}")
                 state["tp2_sent"] = True
                 save_state(state)
-
             if high_price >= tp1 and not tp1_sent:
-                send_telegram(f"🎯 **[골드 선물 1차 목표가 도달 (TP1)]**\n\n• 기준 타임프레임: `{TIMEFRAME}`\n• 진입가: `${entry:,.2f}`\n• 도달 고가: `${high_price:,.2f}`\n📈 **TP1 도달! 일부 익절 구간입니다.**\n\n🔗 {chart_link}")
+                send_telegram(f"🎯 **[골드 선물 1차 목표가 도달 (TP1)]**\n\n• 진입가: `${entry:,.2f}`\n📈 **TP1 도달 (일부 익절)**\n\n🔗 {chart_link}")
                 state["tp1_sent"] = True
                 save_state(state)
 
         elif pos_type == "SHORT":
             if high_price >= sl and not sl_sent:
-                send_telegram(f"🛑 **[골드 선물 손절가 도달 (SL)]**\n\n• 기준 타임프레임: `{TIMEFRAME}`\n• 진입가: `${entry:,.2f}`\n• 도달 고가: `${high_price:,.2f}`\n❌ **손절가(SL) 라인 터치. 포지션이 종료되었습니다.**\n\n🔗 {chart_link}")
+                send_telegram(f"🛑 **[골드 선물 손절가 도달 (SL)]**\n\n• 진입가: `${entry:,.2f}`\n• 도달 고가: `${high_price:,.2f}`\n❌ **손절가 터치로 포지션 종료.**\n\n🔗 {chart_link}")
                 clear_state()
                 return
-
             if low_price <= tp3 and not tp3_sent:
-                send_telegram(f"🎯 **[골드 선물 3차 목표가 도달 (TP3)]**\n\n• 기준 타임프레임: `{TIMEFRAME}`\n• 진입가: `${entry:,.2f}`\n• 도달 저가: `${low_price:,.2f}`\n🔥 **TP3 최종 익절 달성! 포지션이 종료되었습니다.** 🚀\n\n🔗 {chart_link}")
+                send_telegram(f"🎯 **[골드 선물 3차 목표가 도달 (TP3)]**\n\n• 진입가: `${entry:,.2f}`\n🔥 **TP3 최종 익절 달성!** 🚀\n\n🔗 {chart_link}")
                 clear_state()
                 return
-
             if low_price <= tp2 and not tp2_sent:
-                send_telegram(f"🎯 **[골드 선물 2차 목표가 도달 (TP2)]**\n\n• 기준 타임프레임: `{TIMEFRAME}`\n• 진입가: `${entry:,.2f}`\n• 도달 저가: `${low_price:,.2f}`\n✨ **TP2 도달! 본절가로 스탑로스(SL) 이동 추천!**\n\n🔗 {chart_link}")
+                send_telegram(f"🎯 **[골드 선물 2차 목표가 도달 (TP2)]**\n\n• 진입가: `${entry:,.2f}`\n✨ **본절가로 스탑로스(SL) 이동 추천!**\n\n🔗 {chart_link}")
                 state["tp2_sent"] = True
                 save_state(state)
-
             if low_price <= tp1 and not tp1_sent:
-                send_telegram(f"🎯 **[골드 선물 1차 목표가 도달 (TP1)]**\n\n• 기준 타임프레임: `{TIMEFRAME}`\n• 진입가: `${entry:,.2f}`\n• 도달 저가: `${low_price:,.2f}`\n📈 **TP1 도달! 일부 익절 구간입니다.**\n\n🔗 {chart_link}")
+                send_telegram(f"🎯 **[골드 선물 1차 목표가 도달 (TP1)]**\n\n• 진입가: `${entry:,.2f}`\n📈 **TP1 도달 (일부 익절)**\n\n🔗 {chart_link}")
                 state["tp1_sent"] = True
                 save_state(state)
-        
         return
 
     # =========================================================================
-    # [2] 신규 포지션 탐색 (추세 필터 + 유리한 손익비 적용)
+    # [2] 신규 포지션 탐색 (이평선 '방향성'까지 완벽히 일치할 때만 진입)
     # =========================================================================
-    # 가격이 20일 이평선 위에 있으면 롱, 아래에 있으면 숏만 허용
-    if price >= sma20:
+    is_sma_rising = sma20 > sma20_prev   # 이평선이 위로 향하고 있는가?
+    is_sma_falling = sma20 < sma20_prev # 이평선이 아래로 향하고 있는가?
+
+    # 롱 조건: 가격이 이평선 위이고, 이평선 자체도 우상향 중일 때만!
+    if price >= sma20 and is_sma_rising:
         pos_type = "LONG"
         action_text = "🟢 **롱 포지션 (매수 진입)**"
-        tp1 = price + 8.0
-        tp2 = price + 16.0
-        tp3 = price + 26.0
-        sl = price - 5.0
-        reason = "20 이평선 상단 안착 및 상승 추세 오더블록 포착"
-    else:
+        tp1 = price + 10.0
+        tp2 = price + 20.0
+        tp3 = price + 35.0
+        sl = price - 8.0  # 노이즈에 안 털리도록 손절 폭 소폭 확대
+        reason = "20 이평선 상단 안착 및 명확한 우상향 상승 추세 확인"
+    
+    # 숏 조건: 가격이 이평선 아래이고, 이평선 자체도 우하향 중일 때만!
+    elif price < sma20 and is_sma_falling:
         pos_type = "SHORT"
         action_text = "🔴 **숏 포지션 (매도 진입)**"
-        tp1 = price - 8.0
-        tp2 = price - 16.0
-        tp3 = price - 26.0
-        sl = price + 5.0
-        reason = "20 이평선 하단 이탈 및 하락 추세 매도 압력 포착"
+        tp1 = price - 10.0
+        tp2 = price - 20.0
+        tp3 = price - 35.0
+        sl = price + 8.0  # 노이즈에 안 털리도록 손절 폭 소폭 확대
+        reason = "20 이평선 하단 이탈 및 명확한 우하향 하락 추세 확인"
+    else:
+        print("현재 시장은 추세가 모호하거나 횡보/역방향 구간입니다. 진입을 보류합니다.")
+        return
 
     new_state = {
         "type": pos_type,
@@ -170,17 +173,16 @@ def main():
         f"• **1차 목표 (TP1)**: `${tp1:,.2f}`\n"
         f"• **2차 목표 (TP2)**: `${tp2:,.2f}`\n"
         f"• **3차 목표 (TP3)**: `${tp3:,.2f}`\n\n"
-        f"🛡 **리스크 관리 (손익비 개선 타점)**\n"
+        f"🛡 **리스크 관리 (안전 타점)**\n"
         f"• **손절가 (SL)**: `${sl:,.2f}`\n\n"
         f"📈 **시장 구조 및 진입 근거**\n"
         f"_{reason}_\n"
         f"────────────────────────\n"
         f"🔗 {chart_link}\n"
-        f"⚡ *자동 기술적 분석 시스템 가동 중*"
+        f"⚡ *강화된 추세 필터 시스템 가동 중*"
     )
     
     send_telegram(message)
 
 if __name__ == "__main__":
     main()
-
