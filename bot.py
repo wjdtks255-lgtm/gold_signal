@@ -40,8 +40,6 @@ def calculate_indicators(df):
 def get_market_data():
     try:
         ticker = yf.Ticker("GC=F")
-        
-        # 15분봉 및 1시간봉 데이터 조회
         df_15m = ticker.history(period="5d", interval="15m")
         df_1h = ticker.history(period="10d", interval="1h")
 
@@ -90,7 +88,7 @@ def main():
     chart_link = "[TradingView 차트 보기 (GCZ2026)](https://www.tradingview.com/chart/?symbol=GCZ2026)"
 
     # =========================================================================
-    # [1] 기존 포지션 모니터링 (스윙 고저점 손절 관리)
+    # [1] 기존 포지션 모니터링
     # =========================================================================
     if state:
         pos_type = state["type"]
@@ -143,7 +141,7 @@ def main():
         return
 
     # =========================================================================
-    # [2] 15분봉 + 1시간봉 조합의 유연한 신규 진입 필터
+    # [2] 지지저항 기반 신규 진입 필터 (개선된 목표가/손절가 산출)
     # =========================================================================
     last_15m = df_15m.iloc[-1]
     last_1h = df_1h.iloc[-1]
@@ -154,33 +152,41 @@ def main():
     rsi_15m = last_15m['rsi']
     sma20_15m = last_15m['sma20']
 
-    swing_low = df_15m['Low'].iloc[-5:].min() - 1.5
-    swing_high = df_15m['High'].iloc[-5:].max() + 1.5
+    # 최근 20개 봉 기준의 넉넉한 스윙 저점/고점 (지지저항 구조 강화)
+    swing_low = df_15m['Low'].iloc[-20:].min() - 2.0
+    swing_high = df_15m['High'].iloc[-20:].max() + 2.0
 
     pos_type = ""
     reason = ""
+    min_risk = 6.0  # 골드 특성에 맞는 최소 리스크 간격 보장 (너무 촘촘해지는 것 방지)
 
-    # 롱 조건: 1시간봉이 상승세이고, 15분봉 가격이 이평선 부근이거나 RSI가 과매도가 아닐 때 유연하게 진입
     if is_1h_bullish and current_price >= sma20_15m and rsi_15m < 65:
         pos_type = "LONG"
         action_text = "🟢 **스마트 롱 포지션 (매수 진입)**"
         sl = round(swing_low, 2)
         risk = current_price - sl
+        if risk < min_risk:
+            risk = min_risk
+            sl = round(current_price - risk, 2)
+            
         tp1 = round(current_price + (risk * 1.5), 2)
         tp2 = round(current_price + (risk * 2.5), 2)
         tp3 = round(current_price + (risk * 4.0), 2)
-        reason = "1시간봉 상승 추세 정렬 및 15분봉 이평선 지지 반등 타점 포착"
+        reason = "1시간봉 상승 추세 및 15분봉 주요 지지/이평선 반등 타점 포착"
 
-    # 숏 조건: 1시간봉이 하락세이고, 15분봉 가격이 이평선 아래이거나 RSI가 과매수가 아닐 때 유연하게 진입
     elif is_1h_bearish and current_price <= sma20_15m and rsi_15m > 35:
         pos_type = "SHORT"
         action_text = "🔴 **스마트 숏 포지션 (매도 진입)**"
         sl = round(swing_high, 2)
         risk = sl - current_price
+        if risk < min_risk:
+            risk = min_risk
+            sl = round(current_price + risk, 2)
+            
         tp1 = round(current_price - (risk * 1.5), 2)
         tp2 = round(current_price - (risk * 2.5), 2)
         tp3 = round(current_price - (risk * 4.0), 2)
-        reason = "1시간봉 하락 추세 정렬 및 15분봉 이평선 저항 압박 타점 포착"
+        reason = "1시간봉 하락 추세 및 15분봉 주요 저항/이평선 압박 타점 포착"
     else:
         print("조건에 부합하는 타점이 없어 대기합니다.")
         return
@@ -203,24 +209,23 @@ def main():
         f"👑 **[골드 선물 스마트 분석 시그널]** 👑\n"
         f"────────────────────────\n"
         f"⏱ **발행 시간**: `{current_time}`\n"
-        f"📊 **분석 기준**: `15분봉 + 1시간봉`\n"
+        f"📊 **분석 기준**: `15분봉 + 1시간봉 (지지저항 반영)`\n"
         f"📈 **매매 방향**: {action_text}\n"
         f"💰 **추천 진입가**: `${current_price:,.2f}`\n\n"
         f"🎯 **목표가 설정 (TP)**\n"
         f"• **1차 목표 (TP1)**: `${tp1:,.2f}`\n"
         f"• **2차 목표 (TP2)**: `${tp2:,.2f}`\n"
         f"• **3차 목표 (TP3)**: `${tp3:,.2f}`\n\n"
-        f"🛡 **구조적 리스크 관리 (스윙 고저점)**\n"
+        f"🛡 **구조적 리스크 관리 (지지저항 SL)**\n"
         f"• **손절가 (SL)**: `${sl:,.2f}`\n\n"
         f"📈 **시장 구조 및 진입 근거**\n"
         f"_{reason}_\n"
         f"────────────────────────\n"
         f"🔗 {chart_link}\n"
-        f"⚡ *스마트 1시간/15분 복합 필터 가동 중*"
+        f"⚡ *스마트 지지저항 및 최적 손익비 가동 중*"
     )
     
     send_telegram(message)
 
 if __name__ == "__main__":
     main()
-
