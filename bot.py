@@ -41,21 +41,17 @@ def get_market_data():
     try:
         ticker = yf.Ticker("GC=F")
         
-        # 15분봉 데이터 (단기 진입 및 스윙 고저점용)
+        # 15분봉 및 1시간봉 데이터 조회
         df_15m = ticker.history(period="5d", interval="15m")
-        # 1시간봉 데이터 (중기 추세용)
         df_1h = ticker.history(period="10d", interval="1h")
-        # 4시간봉 데이터 (장기 추세용)
-        df_4h = ticker.history(period="30d", interval="4h")
 
-        if len(df_15m) < 30 or len(df_1h) < 30 or len(df_4h) < 30:
+        if len(df_15m) < 30 or len(df_1h) < 30:
             return None
 
         df_15m = calculate_indicators(df_15m)
         df_1h = calculate_indicators(df_1h)
-        df_4h = calculate_indicators(df_4h)
 
-        return df_15m, df_1h, df_4h
+        return df_15m, df_1h
     except Exception as e:
         print(f"시장 데이터 조회 실패: {e}")
         return None
@@ -83,7 +79,7 @@ def main():
         print("데이터를 충분히 불러오지 못했습니다.")
         return
 
-    df_15m, df_1h, df_4h = data
+    df_15m, df_1h = data
     
     current_price = df_15m.iloc[-1]['Close']
     low_price = df_15m.iloc[-1]['Low']
@@ -147,20 +143,16 @@ def main():
         return
 
     # =========================================================================
-    # [2] 멀티 타임프레임 + 볼밴/RSI + 스윙 고저점 신규 진입 필터
+    # [2] 15분봉 + 1시간봉 조합의 유연한 신규 진입 필터
     # =========================================================================
     last_15m = df_15m.iloc[-1]
     last_1h = df_1h.iloc[-1]
-    last_4h = df_4h.iloc[-1]
 
     is_1h_bullish = last_1h['Close'] > last_1h['sma20']
-    is_4h_bullish = last_4h['Close'] > last_4h['sma20']
     is_1h_bearish = last_1h['Close'] < last_1h['sma20']
-    is_4h_bearish = last_4h['Close'] < last_4h['sma20']
 
     rsi_15m = last_15m['rsi']
-    bb_lower_15m = last_15m['bb_lower']
-    bb_upper_15m = last_15m['bb_upper']
+    sma20_15m = last_15m['sma20']
 
     swing_low = df_15m['Low'].iloc[-5:].min() - 1.5
     swing_high = df_15m['High'].iloc[-5:].max() + 1.5
@@ -168,27 +160,29 @@ def main():
     pos_type = ""
     reason = ""
 
-    if is_1h_bullish and is_4h_bullish and (current_price <= bb_lower_15m or rsi_15m < 40):
+    # 롱 조건: 1시간봉이 상승세이고, 15분봉 가격이 이평선 부근이거나 RSI가 과매도가 아닐 때 유연하게 진입
+    if is_1h_bullish and current_price >= sma20_15m and rsi_15m < 65:
         pos_type = "LONG"
-        action_text = "🟢 **멀티타임프레임 롱 포지션 (매수 진입)**"
+        action_text = "🟢 **스마트 롱 포지션 (매수 진입)**"
         sl = round(swing_low, 2)
         risk = current_price - sl
         tp1 = round(current_price + (risk * 1.5), 2)
         tp2 = round(current_price + (risk * 2.5), 2)
         tp3 = round(current_price + (risk * 4.0), 2)
-        reason = "상위 타임프레임(1H/4H) 상승 정렬 및 15분봉 볼밴 하단/RSI 반등 타점 포착"
+        reason = "1시간봉 상승 추세 정렬 및 15분봉 이평선 지지 반등 타점 포착"
 
-    elif is_1h_bearish and is_4h_bearish and (current_price >= bb_upper_15m or rsi_15m > 60):
+    # 숏 조건: 1시간봉이 하락세이고, 15분봉 가격이 이평선 아래이거나 RSI가 과매수가 아닐 때 유연하게 진입
+    elif is_1h_bearish and current_price <= sma20_15m and rsi_15m > 35:
         pos_type = "SHORT"
-        action_text = "🔴 **멀티타임프레임 숏 포지션 (매도 진입)**"
+        action_text = "🔴 **스마트 숏 포지션 (매도 진입)**"
         sl = round(swing_high, 2)
         risk = sl - current_price
         tp1 = round(current_price - (risk * 1.5), 2)
         tp2 = round(current_price - (risk * 2.5), 2)
         tp3 = round(current_price - (risk * 4.0), 2)
-        reason = "상위 타임프레임(1H/4H) 하락 정렬 및 15분봉 볼밴 상단/RSI 저항 타점 포착"
+        reason = "1시간봉 하락 추세 정렬 및 15분봉 이평선 저항 압박 타점 포착"
     else:
-        print("조건에 부합하는 명확한 멀티타임프레임 타점이 없어 진입을 대기합니다.")
+        print("조건에 부합하는 타점이 없어 대기합니다.")
         return
 
     new_state = {
@@ -206,10 +200,10 @@ def main():
     save_state(new_state)
 
     message = (
-        f"👑 **[골드 선물 멀티타임프레임 분석 시그널]** 👑\n"
+        f"👑 **[골드 선물 스마트 분석 시그널]** 👑\n"
         f"────────────────────────\n"
         f"⏱ **발행 시간**: `{current_time}`\n"
-        f"📊 **분석 기준**: `15분봉 + 1시간봉 + 4시간봉`\n"
+        f"📊 **분석 기준**: `15분봉 + 1시간봉`\n"
         f"📈 **매매 방향**: {action_text}\n"
         f"💰 **추천 진입가**: `${current_price:,.2f}`\n\n"
         f"🎯 **목표가 설정 (TP)**\n"
@@ -222,10 +216,11 @@ def main():
         f"_{reason}_\n"
         f"────────────────────────\n"
         f"🔗 {chart_link}\n"
-        f"⚡ *MTF 볼린저밴드 & RSI 정밀 필터 가동 중*"
+        f"⚡ *스마트 1시간/15분 복합 필터 가동 중*"
     )
     
     send_telegram(message)
 
 if __name__ == "__main__":
     main()
+
