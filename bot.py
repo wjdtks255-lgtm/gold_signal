@@ -62,8 +62,11 @@ def get_market_data():
 
 def load_state():
     if os.path.exists(STATE_FILE):
-        with open(STATE_FILE, "r") as f:
-            return json.load(f)
+        try:
+            with open(STATE_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except:
+            return None
     return None
 
 def save_state(state):
@@ -150,25 +153,21 @@ def main():
     last_1h = df_1h.iloc[-1]
     last_4h = df_4h.iloc[-1]
 
-    # 다중 타임프레임 추세 판단 (1시간봉 & 4시간봉 이평선 기준)
     is_1h_bullish = last_1h['Close'] > last_1h['sma20']
     is_4h_bullish = last_4h['Close'] > last_4h['sma20']
     is_1h_bearish = last_1h['Close'] < last_1h['sma20']
     is_4h_bearish = last_4h['Close'] < last_4h['sma20']
 
-    # 15분봉 볼린저 밴드 및 RSI 조건
     rsi_15m = last_15m['rsi']
     bb_lower_15m = last_15m['bb_lower']
     bb_upper_15m = last_15m['bb_upper']
 
-    # 최근 5개 봉 기준 스윙 저점(최저가) 및 스윙 고점(최고가) 계산 (안전한 구조적 손절용)
     swing_low = df_15m['Low'].iloc[-5:].min() - 1.5
     swing_high = df_15m['High'].iloc[-5:].max() + 1.5
 
     pos_type = ""
     reason = ""
 
-    # 롱 조건: 상위 타임프레임(1H, 4H)이 모두 상승세이고, 15분봉에서 하단 밴드 터치 후 RSI가 과매도(40 이하)에서 반등할 때
     if is_1h_bullish and is_4h_bullish and (current_price <= bb_lower_15m or rsi_15m < 40):
         pos_type = "LONG"
         action_text = "🟢 **멀티타임프레임 롱 포지션 (매수 진입)**"
@@ -179,7 +178,6 @@ def main():
         tp3 = round(current_price + (risk * 4.0), 2)
         reason = "상위 타임프레임(1H/4H) 상승 정렬 및 15분봉 볼밴 하단/RSI 반등 타점 포착"
 
-    # 숏 조건: 상위 타임프레임(1H, 4H)이 모두 하락세이고, 15분봉에서 상단 밴드 터치 후 RSI가 과매수(60 이상)에서 꺾일 때
     elif is_1h_bearish and is_4h_bearish and (current_price >= bb_upper_15m or rsi_15m > 60):
         pos_type = "SHORT"
         action_text = "🔴 **멀티타임프레임 숏 포지션 (매도 진입)**"
