@@ -88,7 +88,7 @@ def main():
     chart_link = "[TradingView 차트 보기 (GCZ2026)](https://www.tradingview.com/chart/?symbol=GCZ2026)"
 
     # =========================================================================
-    # [1] 기존 포지션 모니터링
+    # [1] 기존 포지션 모니터링 (수익 달러 폭 표기 추가)
     # =========================================================================
     if state:
         pos_type = state["type"]
@@ -104,44 +104,51 @@ def main():
         sl_sent = state.get("sl_sent", False)
 
         if pos_type == "LONG":
+            profit_pips_tp3 = tp3 - entry
             if low_price <= sl and not sl_sent:
+                loss_diff = entry - low_price
                 send_telegram(f"🛑 **[골드 선물 손절가 도달 (SL)]**\n\n• 진입가: `${entry:,.2f}`\n• 도달 저가: `${low_price:,.2f}`\n❌ **구조적 손절가 터치. 포지션 종료.**\n\n🔗 {chart_link}")
                 clear_state()
                 return
             if high_price >= tp3 and not tp3_sent:
-                send_telegram(f"🎯 **[골드 선물 3차 목표가 도달 (TP3)]**\n\n• 진입가: `${entry:,.2f}`\n🔥 **TP3 최종 익절 달성!** 🚀\n\n🔗 {chart_link}")
+                send_telegram(f"🎯 **[골드 선물 3차 목표가 도달 (TP3)]**\n\n• 진입가: `${entry:,.2f}`\n• 3차 익절 폭: `+${profit_pips_tp3:,.2f}` 달성\n🔥 **TP3 최종 익절 달성!** 🚀\n\n🔗 {chart_link}")
                 clear_state()
                 return
             if high_price >= tp2 and not tp2_sent:
-                send_telegram(f"🎯 **[골드 선물 2차 목표가 도달 (TP2)]**\n\n• 진입가: `${entry:,.2f}`\n✨ **본절가로 스탑로스(SL) 이동 추천!**\n\n🔗 {chart_link}")
+                profit_diff = tp2 - entry
+                send_telegram(f"🎯 **[골드 선물 2차 목표가 도달 (TP2)]**\n\n• 진입가: `${entry:,.2f}`\n• 2차 익절 폭: `+${profit_diff:,.2f}` 달성\n✨ **본절가로 스탑로스(SL) 이동 추천!**\n\n🔗 {chart_link}")
                 state["tp2_sent"] = True
                 save_state(state)
             if high_price >= tp1 and not tp1_sent:
-                send_telegram(f"🎯 **[골드 선물 1차 목표가 도달 (TP1)]**\n\n• 진입가: `${entry:,.2f}`\n📈 **TP1 도달 (일부 익절)**\n\n🔗 {chart_link}")
+                profit_diff = tp1 - entry
+                send_telegram(f"🎯 **[골드 선물 1차 목표가 도달 (TP1)]**\n\n• 진입가: `${entry:,.2f}`\n• 1차 익절 폭: `+${profit_diff:,.2f}` 달성\n📈 **TP1 도달 (일부 익절)**\n\n🔗 {chart_link}")
                 state["tp1_sent"] = True
                 save_state(state)
 
         elif pos_type == "SHORT":
+            profit_pips_tp3 = entry - tp3
             if high_price >= sl and not sl_sent:
                 send_telegram(f"🛑 **[골드 선물 손절가 도달 (SL)]**\n\n• 진입가: `${entry:,.2f}`\n• 도달 고가: `${high_price:,.2f}`\n❌ **구조적 손절가 터치. 포지션 종료.**\n\n🔗 {chart_link}")
                 clear_state()
                 return
             if low_price <= tp3 and not tp3_sent:
-                send_telegram(f"🎯 **[골드 선물 3차 목표가 도달 (TP3)]**\n\n• 진입가: `${entry:,.2f}`\n🔥 **TP3 최종 익절 달성!** 🚀\n\n🔗 {chart_link}")
+                send_telegram(f"🎯 **[골드 선물 3차 목표가 도달 (TP3)]**\n\n• 진입가: `${entry:,.2f}`\n• 3차 익절 폭: `+${profit_pips_tp3:,.2f}` 달성\n🔥 **TP3 최종 익절 달성!** 🚀\n\n🔗 {chart_link}")
                 clear_state()
                 return
             if low_price <= tp2 and not tp2_sent:
-                send_telegram(f"🎯 **[골드 선물 2차 목표가 도달 (TP2)]**\n\n• 진입가: `${entry:,.2f}`\n✨ **본절가로 스탑로스(SL) 이동 추천!**\n\n🔗 {chart_link}")
+                profit_diff = entry - tp2
+                send_telegram(f"🎯 **[골드 선물 2차 목표가 도달 (TP2)]**\n\n• 진입가: `${entry:,.2f}`\n• 2차 익절 폭: `+${profit_diff:,.2f}` 달성\n✨ **본절가로 스탑로스(SL) 이동 추천!**\n\n🔗 {chart_link}")
                 state["tp2_sent"] = True
                 save_state(state)
             if low_price <= tp1 and not tp1_sent:
-                send_telegram(f"🎯 **[골드 선물 1차 목표가 도달 (TP1)]**\n\n• 진입가: `${entry:,.2f}`\n📈 **TP1 도달 (일부 익절)**\n\n🔗 {chart_link}")
+                profit_diff = entry - tp1
+                send_telegram(f"🎯 **[골드 선물 1차 목표가 도달 (TP1)]**\n\n• 진입가: `${entry:,.2f}`\n• 1차 익절 폭: `+${profit_diff:,.2f}` 달성\n📈 **TP1 도달 (일부 익절)**\n\n🔗 {chart_link}")
                 state["tp1_sent"] = True
                 save_state(state)
         return
 
     # =========================================================================
-    # [2] 지지저항 기반 신규 진입 필터 (개선된 목표가/손절가 산출)
+    # [2] 지지저항 기반 신규 진입 필터 (손익비 및 RSI 지표 요약 포함)
     # =========================================================================
     last_15m = df_15m.iloc[-1]
     last_1h = df_1h.iloc[-1]
@@ -152,13 +159,12 @@ def main():
     rsi_15m = last_15m['rsi']
     sma20_15m = last_15m['sma20']
 
-    # 최근 20개 봉 기준의 넉넉한 스윙 저점/고점 (지지저항 구조 강화)
     swing_low = df_15m['Low'].iloc[-20:].min() - 2.0
     swing_high = df_15m['High'].iloc[-20:].max() + 2.0
 
     pos_type = ""
     reason = ""
-    min_risk = 6.0  # 골드 특성에 맞는 최소 리스크 간격 보장 (너무 촘촘해지는 것 방지)
+    min_risk = 6.0
 
     if is_1h_bullish and current_price >= sma20_15m and rsi_15m < 65:
         pos_type = "LONG"
@@ -172,7 +178,7 @@ def main():
         tp1 = round(current_price + (risk * 1.5), 2)
         tp2 = round(current_price + (risk * 2.5), 2)
         tp3 = round(current_price + (risk * 4.0), 2)
-        reason = "1시간봉 상승 추세 및 15분봉 주요 지지/이평선 반등 타점 포착"
+        reason = f"1시간봉 상승 추세 및 15분봉 주요 지지/이평선 반등 (15분 RSI: {rsi_15m:.1f})"
 
     elif is_1h_bearish and current_price <= sma20_15m and rsi_15m > 35:
         pos_type = "SHORT"
@@ -186,7 +192,7 @@ def main():
         tp1 = round(current_price - (risk * 1.5), 2)
         tp2 = round(current_price - (risk * 2.5), 2)
         tp3 = round(current_price - (risk * 4.0), 2)
-        reason = "1시간봉 하락 추세 및 15분봉 주요 저항/이평선 압박 타점 포착"
+        reason = f"1시간봉 하락 추세 및 15분봉 주요 저항/이평선 압박 (15분 RSI: {rsi_15m:.1f})"
     else:
         print("조건에 부합하는 타점이 없어 대기합니다.")
         return
@@ -212,10 +218,10 @@ def main():
         f"📊 **분석 기준**: `15분봉 + 1시간봉 (지지저항 반영)`\n"
         f"📈 **매매 방향**: {action_text}\n"
         f"💰 **추천 진입가**: `${current_price:,.2f}`\n\n"
-        f"🎯 **목표가 설정 (TP)**\n"
-        f"• **1차 목표 (TP1)**: `${tp1:,.2f}`\n"
-        f"• **2차 목표 (TP2)**: `${tp2:,.2f}`\n"
-        f"• **3차 목표 (TP3)**: `${tp3:,.2f}`\n\n"
+        f"🎯 **목표가 설정 (TP) 및 손익비**\n"
+        f"• **1차 목표 (TP1)**: `${tp1:,.2f}` _(손익비 1:1.5)_\n"
+        f"• **2차 목표 (TP2)**: `${tp2:,.2f}` _(손익비 1:2.5)_\n"
+        f"• **3차 목표 (TP3)**: `${tp3:,.2f}` _(손익비 1:4.0)_\n\n"
         f"🛡 **구조적 리스크 관리 (지지저항 SL)**\n"
         f"• **손절가 (SL)**: `${sl:,.2f}`\n\n"
         f"📈 **시장 구조 및 진입 근거**\n"
