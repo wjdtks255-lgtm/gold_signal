@@ -1,6 +1,6 @@
 {
   "version": "11.2.1",
-  "status": "PENDING",
+  "status": "ACTIVE",
   "direction": "SHORT",
   "signal_price": 4184.2998046875,
   "pullback_low": 4185.184035473119,
@@ -8,15 +8,15 @@
   "pullback_touched": true,
   "signal_time": "2026-09-30T00:50:29.575964+09:00",
   "pending_time": "2026-09-30T00:50:29.575977+09:00",
-  "entry": null,
-  "sl": null,
-  "tp1": null,
-  "tp2": null,
-  "tp3": null,
+  "entry": 4188.5,
+  "sl": 4200.37345682342,
+  "tp1": 4174.251851811895,
+  "tp2": 4164.753086353158,
+  "tp3": 4152.879629529738,
   "tp1_hit": false,
   "tp2_hit": false,
   "tp3_hit": false,
   "pending_alert_sent": true,
-  "entry_alert_sent": false,
-  "last_update": "2026-09-30T00:57:10.318233+09:00"
+  "entry_alert_sent": true,
+  "last_update": "2026-09-30T01:10:56.294056+09:00"
 }
