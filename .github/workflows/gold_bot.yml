@@ -6,7 +6,7 @@ on:
   schedule:
     - cron: "*/5 * * * *"
 
-# GitHub Actions가 상태 파일을 커밋하고 push할 수 있도록 권한 부여
+# GitHub Actions가 상태 파일을 commit하고 push할 수 있도록 권한 부여
 permissions:
   contents: write
 
@@ -15,6 +15,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+
       # Repository 가져오기
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -27,21 +28,21 @@ jobs:
         with:
           python-version: "3.11"
 
-      # 필요한 패키지 설치
+      # Python 패키지 설치
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      # 골드 시그널 봇 실행
+      # Gold Futures Smart Signal Bot 실행
       - name: Run Gold Signal Bot
         env:
-          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
           python bot.py
 
-      # 상태 파일 저장 및 GitHub에 Push
+      # 상태 파일 GitHub에 저장
       - name: Commit state files
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
