@@ -1,6 +1,5 @@
 import os
 import json
-import time
 import requests
 import yfinance as yf
 import pandas as pd
@@ -16,7 +15,6 @@ TICKER = "GC=F"
 STATE_FILE = "signal_state.json"
 LOG_FILE = "bot_log.json"
 
-# Risk / Reward
 TP1_R = 1.20
 TP2_R = 2.00
 TP3_R = 3.00
@@ -25,18 +23,15 @@ MAX_SL_ATR = 2.50
 MAX_ENTRY_DISTANCE_ATR = 1.00
 MAX_SIGNAL_MOVE_ATR = 0.50
 
-# Trend filters
 MIN_ADX_1H = 18
 MIN_ADX_15M = 16
 
-# RSI filters
 LONG_RSI_MIN = 52
 LONG_RSI_MAX = 68
 
 SHORT_RSI_MIN = 32
 SHORT_RSI_MAX = 48
 
-# After position closes
 COOLDOWN_MINUTES = 60
 
 
@@ -49,11 +44,15 @@ TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
 
 def send_telegram(message):
+
     if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
-        print("Telegram secrets are missing.")
+        print("ERROR: Telegram secrets are missing.")
         return False
 
-    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+    url = (
+        f"https://api.telegram.org/"
+        f"bot{TELEGRAM_TOKEN}/sendMessage"
+    )
 
     payload = {
         "chat_id": TELEGRAM_CHAT_ID,
@@ -63,6 +62,7 @@ def send_telegram(message):
     }
 
     try:
+
         response = requests.post(
             url,
             json=payload,
@@ -70,12 +70,15 @@ def send_telegram(message):
         )
 
         if response.status_code != 200:
-            print("Telegram error:", response.text)
+            print("Telegram error:")
+            print(response.text)
             return False
 
+        print("Telegram message sent.")
         return True
 
     except Exception as e:
+
         print("Telegram exception:", e)
         return False
 
@@ -85,6 +88,7 @@ def send_telegram(message):
 # ============================================================
 
 def normalize_timestamp(value):
+
     ts = pd.Timestamp(value)
 
     if ts.tzinfo is None:
@@ -96,10 +100,17 @@ def normalize_timestamp(value):
 
 
 def format_signal_time(value):
+
     try:
+
         ts = normalize_timestamp(value)
-        return ts.strftime("%Y-%m-%d %H:%M UTC")
+
+        return ts.strftime(
+            "%Y-%m-%d %H:%M UTC"
+        )
+
     except Exception:
+
         return ""
 
 
@@ -113,7 +124,13 @@ def load_state():
         return {}
 
     try:
-        with open(STATE_FILE, "r", encoding="utf-8") as f:
+
+        with open(
+            STATE_FILE,
+            "r",
+            encoding="utf-8"
+        ) as f:
+
             data = json.load(f)
 
         if isinstance(data, dict):
@@ -122,24 +139,25 @@ def load_state():
         return {}
 
     except Exception as e:
+
         print("State load error:", e)
         return {}
 
 
 def save_state(state):
 
-    with open(STATE_FILE, "w", encoding="utf-8") as f:
+    with open(
+        STATE_FILE,
+        "w",
+        encoding="utf-8"
+    ) as f:
+
         json.dump(
             state,
             f,
             ensure_ascii=False,
             indent=2
         )
-
-
-def clear_state():
-
-    save_state({})
 
 
 # ============================================================
@@ -153,13 +171,20 @@ def log_event(event, data=None):
     if os.path.exists(LOG_FILE):
 
         try:
-            with open(LOG_FILE, "r", encoding="utf-8") as f:
+
+            with open(
+                LOG_FILE,
+                "r",
+                encoding="utf-8"
+            ) as f:
+
                 logs = json.load(f)
 
             if not isinstance(logs, list):
                 logs = []
 
         except Exception:
+
             logs = []
 
     item = {
@@ -172,10 +197,14 @@ def log_event(event, data=None):
 
     logs.append(item)
 
-    # Keep last 500 records
     logs = logs[-500:]
 
-    with open(LOG_FILE, "w", encoding="utf-8") as f:
+    with open(
+        LOG_FILE,
+        "w",
+        encoding="utf-8"
+    ) as f:
+
         json.dump(
             logs,
             f,
@@ -185,75 +214,7 @@ def log_event(event, data=None):
 
 
 # ============================================================
-# LEGACY STATE MIGRATION
-# ============================================================
-
-def migrate_state(state):
-
-    if not state:
-        return state
-
-    defaults = {
-        "status": "active",
-        "tp1_hit": False,
-        "tp2_hit": False,
-        "tp3_hit": False,
-        "entry_alert_sent": True,
-        "entry_time": None,
-        "signal_time": None,
-        "risk": 0.0,
-        "atr": 0.0,
-        "rsi": 0.0,
-        "adx": 0.0,
-        "reason": ""
-    }
-
-    changed = False
-
-    for key, value in defaults.items():
-
-        if key not in state:
-            state[key] = value
-            changed = True
-
-    # Old states may not have entry_time.
-    # Use signal_time when possible.
-    if not state.get("entry_time"):
-
-        if state.get("signal_time"):
-
-            try:
-                signal_ts = normalize_timestamp(
-                    state["signal_time"]
-                )
-
-                state["entry_time"] = (
-                    signal_ts + pd.Timedelta(minutes=15)
-                ).isoformat()
-
-            except Exception:
-                state["entry_time"] = (
-                    pd.Timestamp.utcnow()
-                    - pd.Timedelta(minutes=15)
-                ).isoformat()
-
-        else:
-
-            state["entry_time"] = (
-                pd.Timestamp.utcnow()
-                - pd.Timedelta(minutes=15)
-            ).isoformat()
-
-        changed = True
-
-    if changed:
-        save_state(state)
-
-    return state
-
-
-# ============================================================
-# DATA
+# MARKET DATA
 # ============================================================
 
 def get_history():
@@ -297,18 +258,33 @@ def get_history():
         if df is None or df.empty:
             return pd.DataFrame()
 
-        if isinstance(df.columns, pd.MultiIndex):
-            df.columns = df.columns.get_level_values(0)
+        if isinstance(
+            df.columns,
+            pd.MultiIndex
+        ):
 
-        df.index = pd.to_datetime(df.index)
+            df.columns = (
+                df.columns
+                .get_level_values(0)
+            )
 
-        try:
-            if df.index.tz is None:
-                df.index = df.index.tz_localize("UTC")
-            else:
-                df.index = df.index.tz_convert("UTC")
-        except Exception:
-            pass
+        df.index = pd.to_datetime(
+            df.index
+        )
+
+        if df.index.tz is None:
+
+            df.index = (
+                df.index
+                .tz_localize("UTC")
+            )
+
+        else:
+
+            df.index = (
+                df.index
+                .tz_convert("UTC")
+            )
 
         return df
 
@@ -321,7 +297,7 @@ def get_history():
 
 
 # ============================================================
-# REMOVE CURRENT INCOMPLETE BAR
+# REMOVE INCOMPLETE CANDLE
 # ============================================================
 
 def remove_incomplete_bar(df):
@@ -343,65 +319,114 @@ def add_indicators(df):
 
     df = df.copy()
 
-    if df.empty:
-        return df
-
     close = df["Close"]
     high = df["High"]
     low = df["Low"]
 
-    # EMA
-    df["EMA20"] = close.ewm(
-        span=20,
-        adjust=False
-    ).mean()
-
-    df["EMA50"] = close.ewm(
-        span=50,
-        adjust=False
-    ).mean()
-
-    # RSI
-    delta = close.diff()
-
-    gain = delta.clip(lower=0)
-    loss = -delta.clip(upper=0)
-
-    avg_gain = gain.ewm(
-        alpha=1 / 14,
-        adjust=False
-    ).mean()
-
-    avg_loss = loss.ewm(
-        alpha=1 / 14,
-        adjust=False
-    ).mean()
-
-    rs = avg_gain / avg_loss.replace(0, np.nan)
-
-    df["RSI"] = 100 - (
-        100 / (1 + rs)
+    # EMA 20
+    df["EMA20"] = (
+        close
+        .ewm(
+            span=20,
+            adjust=False
+        )
+        .mean()
     )
 
+    # EMA 50
+    df["EMA50"] = (
+        close
+        .ewm(
+            span=50,
+            adjust=False
+        )
+        .mean()
+    )
+
+    # --------------------------------------------------------
+    # RSI
+    # --------------------------------------------------------
+
+    delta = close.diff()
+
+    gain = delta.clip(
+        lower=0
+    )
+
+    loss = -delta.clip(
+        upper=0
+    )
+
+    avg_gain = (
+        gain
+        .ewm(
+            alpha=1 / 14,
+            adjust=False
+        )
+        .mean()
+    )
+
+    avg_loss = (
+        loss
+        .ewm(
+            alpha=1 / 14,
+            adjust=False
+        )
+        .mean()
+    )
+
+    rs = (
+        avg_gain /
+        avg_loss.replace(
+            0,
+            np.nan
+        )
+    )
+
+    df["RSI"] = (
+        100 -
+        (
+            100 /
+            (1 + rs)
+        )
+    )
+
+    # --------------------------------------------------------
     # ATR
+    # --------------------------------------------------------
+
     prev_close = close.shift(1)
 
     tr1 = high - low
-    tr2 = (high - prev_close).abs()
-    tr3 = (low - prev_close).abs()
+
+    tr2 = (
+        high - prev_close
+    ).abs()
+
+    tr3 = (
+        low - prev_close
+    ).abs()
 
     tr = pd.concat(
         [tr1, tr2, tr3],
         axis=1
     ).max(axis=1)
 
-    df["ATR"] = tr.ewm(
-        alpha=1 / 14,
-        adjust=False
-    ).mean()
+    df["ATR"] = (
+        tr
+        .ewm(
+            alpha=1 / 14,
+            adjust=False
+        )
+        .mean()
+    )
 
+    # --------------------------------------------------------
     # ADX
+    # --------------------------------------------------------
+
     up_move = high.diff()
+
     down_move = -low.diff()
 
     plus_dm = np.where(
@@ -428,59 +453,117 @@ def add_indicators(df):
         index=df.index
     )
 
-    atr_safe = df["ATR"].replace(0, np.nan)
+    atr_safe = (
+        df["ATR"]
+        .replace(
+            0,
+            np.nan
+        )
+    )
 
     plus_di = (
         100 *
-        plus_dm.ewm(
+        plus_dm
+        .ewm(
             alpha=1 / 14,
             adjust=False
-        ).mean()
-        / atr_safe
+        )
+        .mean()
+        /
+        atr_safe
     )
 
     minus_di = (
         100 *
-        minus_dm.ewm(
+        minus_dm
+        .ewm(
             alpha=1 / 14,
             adjust=False
-        ).mean()
-        / atr_safe
+        )
+        .mean()
+        /
+        atr_safe
     )
 
     dx = (
         100 *
         (plus_di - minus_di).abs()
         /
-        (plus_di + minus_di).replace(0, np.nan)
+        (
+            plus_di +
+            minus_di
+        ).replace(
+            0,
+            np.nan
+        )
     )
 
-    df["ADX"] = dx.ewm(
-        alpha=1 / 14,
-        adjust=False
-    ).mean()
+    df["ADX"] = (
+        dx
+        .ewm(
+            alpha=1 / 14,
+            adjust=False
+        )
+        .mean()
+    )
 
+    # --------------------------------------------------------
     # Candle body
+    # --------------------------------------------------------
+
     candle_range = (
         high - low
-    ).replace(0, np.nan)
-
-    df["BODY_RATIO"] = (
-        (close - df["Open"]).abs()
-        / candle_range
+    ).replace(
+        0,
+        np.nan
     )
 
-    # Candle close position
+    df["BODY_RATIO"] = (
+        (
+            close -
+            df["Open"]
+        ).abs()
+        /
+        candle_range
+    )
+
+    # --------------------------------------------------------
+    # Close position
+    # --------------------------------------------------------
+
     df["CLOSE_POSITION"] = (
-        (close - low)
-        / candle_range
+        (
+            close -
+            low
+        )
+        /
+        candle_range
     )
 
     return df
 
 
 # ============================================================
-# SIGNAL
+# CONDITION PRINT
+# ============================================================
+
+def print_condition(
+    name,
+    value
+):
+
+    if value:
+        status = "PASS"
+    else:
+        status = "FAIL"
+
+    print(
+        f"{name:<18}: {status}"
+    )
+
+
+# ============================================================
+# FIND ENTRY SIGNAL
 # ============================================================
 
 def find_entry_signal(
@@ -494,117 +577,345 @@ def find_entry_signal(
         df_15m.empty or
         df_5m.empty
     ):
+
+        print(
+            "ERROR: insufficient market data."
+        )
+
         return None
 
-    df_1h = add_indicators(df_1h)
-    df_15m = add_indicators(df_15m)
-    df_5m = add_indicators(df_5m)
+    df_1h = add_indicators(
+        df_1h
+    )
+
+    df_15m = add_indicators(
+        df_15m
+    )
+
+    df_5m = add_indicators(
+        df_5m
+    )
 
     if len(df_1h) < 60:
+
+        print(
+            "ERROR: not enough 1H data."
+        )
+
         return None
 
     if len(df_15m) < 60:
+
+        print(
+            "ERROR: not enough 15M data."
+        )
+
         return None
 
     if len(df_5m) < 30:
+
+        print(
+            "ERROR: not enough 5M data."
+        )
+
         return None
 
+    # --------------------------------------------------------
+    # Latest candles
+    # --------------------------------------------------------
+
     h1 = df_1h.iloc[-1]
+
     p = df_15m.iloc[-2]
+
     c = df_15m.iloc[-1]
 
     # --------------------------------------------------------
-    # Safety check
+    # Current values
     # --------------------------------------------------------
 
-    required_values = [
-        h1["Close"],
-        h1["EMA20"],
-        h1["EMA50"],
-        h1["ADX"],
-        p["Low"],
-        p["High"],
-        c["Close"],
-        c["EMA20"],
-        c["RSI"],
-        c["ATR"],
+    price = float(
+        c["Close"]
+    )
+
+    ema20 = float(
+        c["EMA20"]
+    )
+
+    rsi = float(
+        c["RSI"]
+    )
+
+    adx = float(
         c["ADX"]
-    ]
+    )
 
-    if any(
-        pd.isna(x)
-        for x in required_values
-    ):
-        return None
+    atr = float(
+        c["ATR"]
+    )
 
-    # --------------------------------------------------------
-    # Actual indicator values
-    # --------------------------------------------------------
+    print("")
+    print("====================================")
+    print(" CURRENT MARKET CHECK")
+    print("====================================")
 
-    rsi = float(c["RSI"])
-    adx = float(c["ADX"])
-    atr = float(c["ATR"])
+    print(
+        f"Price : ${price:,.2f}"
+    )
 
-    current_price = float(c["Close"])
-    ema20 = float(c["EMA20"])
+    print(
+        f"EMA20 : ${ema20:,.2f}"
+    )
 
-    if atr <= 0:
-        return None
+    print(
+        f"RSI   : {rsi:.2f}"
+    )
+
+    print(
+        f"ADX   : {adx:.2f}"
+    )
+
+    print(
+        f"ATR   : {atr:.2f}"
+    )
 
     # --------------------------------------------------------
     # 1H trend
     # --------------------------------------------------------
 
     h1_bull = (
-        h1["Close"] > h1["EMA20"] and
-        h1["EMA20"] > h1["EMA50"] and
-        h1["EMA20"] > df_1h["EMA20"].iloc[-2] and
-        h1["ADX"] >= MIN_ADX_1H
+        h1["Close"] >
+        h1["EMA20"]
+        and
+        h1["EMA20"] >
+        h1["EMA50"]
+        and
+        h1["EMA20"] >
+        df_1h["EMA20"].iloc[-2]
+        and
+        h1["ADX"] >=
+        MIN_ADX_1H
     )
 
     h1_bear = (
-        h1["Close"] < h1["EMA20"] and
-        h1["EMA20"] < h1["EMA50"] and
-        h1["EMA20"] < df_1h["EMA20"].iloc[-2] and
-        h1["ADX"] >= MIN_ADX_1H
+        h1["Close"] <
+        h1["EMA20"]
+        and
+        h1["EMA20"] <
+        h1["EMA50"]
+        and
+        h1["EMA20"] <
+        df_1h["EMA20"].iloc[-2]
+        and
+        h1["ADX"] >=
+        MIN_ADX_1H
     )
 
-    # --------------------------------------------------------
-    # 15M LONG
-    # --------------------------------------------------------
+    # ========================================================
+    # LONG
+    # ========================================================
 
     long_pullback = (
-        p["Low"] <= p["EMA20"] + p["ATR"] * 0.35
+        p["Low"] <=
+        p["EMA20"] +
+        p["ATR"] * 0.35
     )
 
     long_hold = (
-        p["Close"] >= p["EMA20"] - p["ATR"] * 0.25
+        p["Close"] >=
+        p["EMA20"] -
+        p["ATR"] * 0.25
     )
 
     long_reversal = (
-        c["Close"] > c["Open"]
+        c["Close"] >
+        c["Open"]
         and
-        c["BODY_RATIO"] >= 0.45
+        c["BODY_RATIO"] >=
+        0.45
         and
-        c["CLOSE_POSITION"] >= 0.65
+        c["CLOSE_POSITION"] >=
+        0.65
     )
 
     long_breakout = (
-        c["Close"] > p["High"]
+        c["Close"] >
+        p["High"]
     )
 
     long_rsi = (
-        LONG_RSI_MIN <= rsi <= LONG_RSI_MAX
+        LONG_RSI_MIN <=
+        rsi <=
+        LONG_RSI_MAX
     )
 
     long_adx = (
-        adx >= MIN_ADX_15M
+        adx >=
+        MIN_ADX_15M
     )
 
     long_distance = (
-        abs(current_price - ema20)
-        <= atr * MAX_ENTRY_DISTANCE_ATR
+        abs(
+            price - ema20
+        )
+        <=
+        atr *
+        MAX_ENTRY_DISTANCE_ATR
     )
+
+    # ========================================================
+    # SHORT
+    # ========================================================
+
+    short_pullback = (
+        p["High"] >=
+        p["EMA20"] -
+        p["ATR"] * 0.35
+    )
+
+    short_hold = (
+        p["Close"] <=
+        p["EMA20"] +
+        p["ATR"] * 0.25
+    )
+
+    short_reversal = (
+        c["Close"] <
+        c["Open"]
+        and
+        c["BODY_RATIO"] >=
+        0.45
+        and
+        c["CLOSE_POSITION"] <=
+        0.35
+    )
+
+    short_breakout = (
+        c["Close"] <
+        p["Low"]
+    )
+
+    short_rsi = (
+        SHORT_RSI_MIN <=
+        rsi <=
+        SHORT_RSI_MAX
+    )
+
+    short_adx = (
+        adx >=
+        MIN_ADX_15M
+    )
+
+    short_distance = (
+        abs(
+            price - ema20
+        )
+        <=
+        atr *
+        MAX_ENTRY_DISTANCE_ATR
+    )
+
+    # ========================================================
+    # LONG DIAGNOSTIC
+    # ========================================================
+
+    print("")
+    print("====================================")
+    print(" LONG CHECK")
+    print("====================================")
+
+    print_condition(
+        "1H Trend",
+        h1_bull
+    )
+
+    print_condition(
+        "Pullback",
+        long_pullback
+    )
+
+    print_condition(
+        "EMA Hold",
+        long_hold
+    )
+
+    print_condition(
+        "Reversal",
+        long_reversal
+    )
+
+    print_condition(
+        "Breakout",
+        long_breakout
+    )
+
+    print_condition(
+        "RSI",
+        long_rsi
+    )
+
+    print_condition(
+        "ADX",
+        long_adx
+    )
+
+    print_condition(
+        "EMA Distance",
+        long_distance
+    )
+
+    # ========================================================
+    # SHORT DIAGNOSTIC
+    # ========================================================
+
+    print("")
+    print("====================================")
+    print(" SHORT CHECK")
+    print("====================================")
+
+    print_condition(
+        "1H Trend",
+        h1_bear
+    )
+
+    print_condition(
+        "Pullback",
+        short_pullback
+    )
+
+    print_condition(
+        "EMA Hold",
+        short_hold
+    )
+
+    print_condition(
+        "Reversal",
+        short_reversal
+    )
+
+    print_condition(
+        "Breakdown",
+        short_breakout
+    )
+
+    print_condition(
+        "RSI",
+        short_rsi
+    )
+
+    print_condition(
+        "ADX",
+        short_adx
+    )
+
+    print_condition(
+        "EMA Distance",
+        short_distance
+    )
+
+    # ========================================================
+    # FINAL CONDITIONS
+    # ========================================================
 
     long_condition = (
         h1_bull
@@ -615,43 +926,6 @@ def find_entry_signal(
         and long_rsi
         and long_adx
         and long_distance
-    )
-
-    # --------------------------------------------------------
-    # 15M SHORT
-    # --------------------------------------------------------
-
-    short_pullback = (
-        p["High"] >= p["EMA20"] - p["ATR"] * 0.35
-    )
-
-    short_hold = (
-        p["Close"] <= p["EMA20"] + p["ATR"] * 0.25
-    )
-
-    short_reversal = (
-        c["Close"] < c["Open"]
-        and
-        c["BODY_RATIO"] >= 0.45
-        and
-        c["CLOSE_POSITION"] <= 0.35
-    )
-
-    short_breakout = (
-        c["Close"] < p["Low"]
-    )
-
-    short_rsi = (
-        SHORT_RSI_MIN <= rsi <= SHORT_RSI_MAX
-    )
-
-    short_adx = (
-        adx >= MIN_ADX_15M
-    )
-
-    short_distance = (
-        abs(current_price - ema20)
-        <= atr * MAX_ENTRY_DISTANCE_ATR
     )
 
     short_condition = (
@@ -665,30 +939,45 @@ def find_entry_signal(
         and short_distance
     )
 
-    # --------------------------------------------------------
-    # No signal
-    # --------------------------------------------------------
+    # ========================================================
+    # NO SIGNAL
+    # ========================================================
 
-    if not long_condition and not short_condition:
+    if (
+        not long_condition
+        and
+        not short_condition
+    ):
+
+        print("")
+        print("====================================")
+        print(" NO VALID SIGNAL")
+        print("====================================")
+        print(
+            "Waiting for next setup..."
+        )
+
         return None
 
-    # --------------------------------------------------------
-    # Direction
-    # --------------------------------------------------------
+    # ========================================================
+    # DIRECTION
+    # ========================================================
 
     if long_condition:
 
         direction = "LONG"
 
-        entry = current_price
+        entry = price
 
         recent_low = float(
-            df_15m["Low"].iloc[-4:-1].min()
+            df_15m["Low"]
+            .iloc[-4:-1]
+            .min()
         )
 
         sl = (
-            recent_low
-            - atr * 0.25
+            recent_low -
+            atr * 0.25
         )
 
         reason = (
@@ -702,15 +991,17 @@ def find_entry_signal(
 
         direction = "SHORT"
 
-        entry = current_price
+        entry = price
 
         recent_high = float(
-            df_15m["High"].iloc[-4:-1].max()
+            df_15m["High"]
+            .iloc[-4:-1]
+            .max()
         )
 
         sl = (
-            recent_high
-            + atr * 0.25
+            recent_high +
+            atr * 0.25
         )
 
         reason = (
@@ -720,66 +1011,112 @@ def find_entry_signal(
             "previous low breakdown"
         )
 
-    # --------------------------------------------------------
-    # Risk
-    # --------------------------------------------------------
+    # ========================================================
+    # RISK
+    # ========================================================
 
-    risk = abs(entry - sl)
+    risk = abs(
+        entry - sl
+    )
 
     if risk <= 0:
+
+        print(
+            "Signal rejected: invalid risk."
+        )
+
         return None
 
-    # SL too wide
-    if risk > atr * MAX_SL_ATR:
+    if risk > (
+        atr *
+        MAX_SL_ATR
+    ):
+
+        print(
+            "Signal rejected: "
+            "SL distance too wide."
+        )
+
         return None
 
-    # --------------------------------------------------------
-    # TP
-    # --------------------------------------------------------
+    # ========================================================
+    # TARGETS
+    # ========================================================
 
     if direction == "LONG":
 
-        tp1 = entry + risk * TP1_R
-        tp2 = entry + risk * TP2_R
-        tp3 = entry + risk * TP3_R
+        tp1 = (
+            entry +
+            risk * TP1_R
+        )
+
+        tp2 = (
+            entry +
+            risk * TP2_R
+        )
+
+        tp3 = (
+            entry +
+            risk * TP3_R
+        )
 
     else:
 
-        tp1 = entry - risk * TP1_R
-        tp2 = entry - risk * TP2_R
-        tp3 = entry - risk * TP3_R
+        tp1 = (
+            entry -
+            risk * TP1_R
+        )
 
-    # --------------------------------------------------------
-    # 5M entry movement protection
-    # --------------------------------------------------------
+        tp2 = (
+            entry -
+            risk * TP2_R
+        )
+
+        tp3 = (
+            entry -
+            risk * TP3_R
+        )
+
+    # ========================================================
+    # 5M MOVEMENT FILTER
+    # ========================================================
 
     recent_5m = float(
         df_5m["Close"].iloc[-1]
     )
 
-    if abs(recent_5m - entry) > (
-        atr * MAX_SIGNAL_MOVE_ATR
+    if abs(
+        recent_5m - entry
+    ) > (
+        atr *
+        MAX_SIGNAL_MOVE_ATR
     ):
+
+        print(
+            "Signal rejected: "
+            "price moved too far."
+        )
+
         return None
 
-    # --------------------------------------------------------
-    # Timestamp
-    # --------------------------------------------------------
+    # ========================================================
+    # SIGNAL TIME
+    # ========================================================
 
     signal_time = normalize_timestamp(
         df_15m.index[-1]
     )
 
-    # yfinance intraday timestamps are interval start.
-    # Actual completed candle time = +15 minutes.
     entry_time = (
-        signal_time
-        + pd.Timedelta(minutes=15)
+        signal_time +
+        pd.Timedelta(
+            minutes=15
+        )
     )
 
-    # --------------------------------------------------------
-    # Return complete signal
-    # --------------------------------------------------------
+    # ========================================================
+    # SIGNAL OBJECT
+    # ========================================================
 
     signal = {
 
@@ -792,38 +1129,106 @@ def find_entry_signal(
         "sl": float(sl),
 
         "tp1": float(tp1),
+
         "tp2": float(tp2),
+
         "tp3": float(tp3),
 
-        "risk": float(risk),
+        "risk": round(
+            float(risk),
+            2
+        ),
 
-        # IMPORTANT:
-        # Save the actual indicator values
-        # at the exact signal candle.
-        "rsi": round(float(rsi), 2),
-        "adx": round(float(adx), 2),
-        "atr": round(float(atr), 2),
+        "rsi": round(
+            float(rsi),
+            2
+        ),
+
+        "adx": round(
+            float(adx),
+            2
+        ),
+
+        "atr": round(
+            float(atr),
+            2
+        ),
 
         "reason": reason,
 
-        "signal_time": signal_time.isoformat(),
+        "signal_time":
+            signal_time.isoformat(),
 
-        "entry_time": entry_time.isoformat(),
+        "entry_time":
+            entry_time.isoformat(),
 
         "tp1_hit": False,
+
         "tp2_hit": False,
+
         "tp3_hit": False,
 
         "entry_alert_sent": False,
 
-        "created_at": pd.Timestamp.utcnow().isoformat()
+        "created_at":
+            pd.Timestamp.utcnow()
+            .isoformat()
     }
+
+    # ========================================================
+    # SIGNAL FOUND
+    # ========================================================
+
+    print("")
+    print("====================================")
+    print(" SIGNAL FOUND")
+    print("====================================")
+
+    print(
+        f"Direction : {direction}"
+    )
+
+    print(
+        f"Entry     : ${entry:,.2f}"
+    )
+
+    print(
+        f"SL        : ${sl:,.2f}"
+    )
+
+    print(
+        f"TP1       : ${tp1:,.2f}"
+    )
+
+    print(
+        f"TP2       : ${tp2:,.2f}"
+    )
+
+    print(
+        f"TP3       : ${tp3:,.2f}"
+    )
+
+    print(
+        f"RSI       : {rsi:.2f}"
+    )
+
+    print(
+        f"ADX       : {adx:.2f}"
+    )
+
+    print(
+        f"ATR       : {atr:.2f}"
+    )
+
+    print(
+        f"Risk      : {risk:.2f}"
+    )
 
     return signal
 
 
 # ============================================================
-# ENTRY MESSAGE
+# ENTRY TELEGRAM
 # ============================================================
 
 def send_entry_alert(state):
@@ -850,86 +1255,101 @@ def send_entry_alert(state):
 ${state["sl"]:,.2f}
 
 🎯 <b>목표가</b>
-TP1: ${state["tp1"]:,.2f} ({TP1_R:.1f}R)
-TP2: ${state["tp2"]:,.2f} ({TP2_R:.1f}R)
-TP3: ${state["tp3"]:,.2f} ({TP3_R:.1f}R)
+TP1: ${state["tp1"]:,.2f} (1.2R)
+TP2: ${state["tp2"]:,.2f} (2.0R)
+TP3: ${state["tp3"]:,.2f} (3.0R)
 
 📐 <b>타점 근거</b>
-{state.get("reason", "Trend → Pullback → Reversal → Breakout")}
+{state["reason"]}
 
-📊 RSI: {float(state.get("rsi", 0)):.2f}
-📊 ADX: {float(state.get("adx", 0)):.2f}
-📏 ATR: {float(state.get("atr", 0)):.2f}
-⚠️ 위험폭: {float(state.get("risk", 0)):.2f}
+📊 RSI: {state["rsi"]:.2f}
+📊 ADX: {state["adx"]:.2f}
+📏 ATR: {state["atr"]:.2f}
+⚠️ 위험폭: {state["risk"]:.2f}
 
 ⏱ 신호봉:
-{format_signal_time(state.get("signal_time", ""))}
+{format_signal_time(state["signal_time"])}
 
 🔗 <a href="https://www.tradingview.com/symbols/COMEX-GC1!/">TradingView 골드 차트</a>
 
 ⚡ 추세 → 눌림 → 반전 → 돌파 확인 방식
 """
 
-    return send_telegram(message)
+    return send_telegram(
+        message
+    )
 
 
 # ============================================================
-# TP / SL MESSAGE
+# TP TELEGRAM
 # ============================================================
 
-def send_tp_alert(state, tp_number):
+def send_tp_alert(
+    state,
+    number
+):
 
-    direction = state["direction"]
-
-    tp_price = state[f"tp{tp_number}"]
+    price = state[
+        f"tp{number}"
+    ]
 
     message = f"""
-<b>🎯 골드 선물 TP{tp_number} 도달</b>
+<b>🎯 골드 선물 TP{number} 도달</b>
 ━━━━━━━━━━━━━━━━━━
 
-📊 방향: {direction}
+📊 방향: {state["direction"]}
 
-💰 진입가: ${state["entry"]:,.2f}
+💰 진입가:
+${state["entry"]:,.2f}
 
-🎯 TP{tp_number}: <b>${tp_price:,.2f}</b>
+🎯 TP{number}:
+<b>${price:,.2f}</b>
 """
 
-    if tp_number == 2:
+    if number == 2:
 
         message += """
         
 🛡 손절가 → 진입가 이동
-⚡ TP2 도달 후 BE 적용
+⚡ BE 적용
 """
 
-    elif tp_number == 3:
+    if number == 3:
 
         message += """
         
-🏁 TP3 최종 목표 도달
+🏁 최종 목표 TP3 도달
 """
 
-    return send_telegram(message)
+    return send_telegram(
+        message
+    )
 
+
+# ============================================================
+# SL TELEGRAM
+# ============================================================
 
 def send_sl_alert(state):
-
-    direction = state["direction"]
 
     message = f"""
 <b>🛑 골드 선물 손절</b>
 ━━━━━━━━━━━━━━━━━━
 
-📊 방향: {direction}
+📊 방향: {state["direction"]}
 
-💰 진입가: ${state["entry"]:,.2f}
+💰 진입가:
+${state["entry"]:,.2f}
 
-🛑 SL: <b>${state["sl"]:,.2f}</b>
+🛑 SL:
+<b>${state["sl"]:,.2f}</b>
 
-📉 해당 포지션 종료
+📉 포지션 종료
 """
 
-    return send_telegram(message)
+    return send_telegram(
+        message
+    )
 
 
 # ============================================================
@@ -947,42 +1367,38 @@ def close_position(
 
 📊 방향: {state["direction"]}
 
-💰 진입가: ${state["entry"]:,.2f}
+💰 진입가:
+${state["entry"]:,.2f}
 
 📌 종료 사유:
 {reason}
 
-⏳ {COOLDOWN_MINUTES}분 쿨다운 적용
+⏳ {COOLDOWN_MINUTES}분 쿨다운
 """
 
-    send_telegram(message)
+    send_telegram(
+        message
+    )
 
     cooldown_until = (
         pd.Timestamp.utcnow()
-        + pd.Timedelta(
+        +
+        pd.Timedelta(
             minutes=COOLDOWN_MINUTES
         )
     )
 
-    new_state = {
-        "status": "cooldown",
-        "cooldown_until": cooldown_until.isoformat()
-    }
-
-    save_state(new_state)
-
-    log_event(
-        "POSITION_CLOSED",
+    save_state(
         {
-            "direction": state["direction"],
-            "entry": state["entry"],
-            "reason": reason
+            "status": "cooldown",
+            "cooldown_until":
+                cooldown_until.isoformat()
         }
     )
 
 
 # ============================================================
-# POSITION MONITOR
+# MONITOR POSITION
 # ============================================================
 
 def monitor_position(
@@ -999,24 +1415,42 @@ def monitor_position(
 
     bars = df_1m[
         df_1m.index >= entry_time
-    ].copy()
+    ]
 
     if bars.empty:
         return state
 
     direction = state["direction"]
 
-    entry = float(state["entry"])
-    sl = float(state["sl"])
+    entry = float(
+        state["entry"]
+    )
 
-    tp1 = float(state["tp1"])
-    tp2 = float(state["tp2"])
-    tp3 = float(state["tp3"])
+    sl = float(
+        state["sl"]
+    )
+
+    tp1 = float(
+        state["tp1"]
+    )
+
+    tp2 = float(
+        state["tp2"]
+    )
+
+    tp3 = float(
+        state["tp3"]
+    )
 
     for timestamp, row in bars.iterrows():
 
-        high = float(row["High"])
-        low = float(row["Low"])
+        high = float(
+            row["High"]
+        )
+
+        low = float(
+            row["Low"]
+        )
 
         # ----------------------------------------------------
         # LONG
@@ -1024,20 +1458,10 @@ def monitor_position(
 
         if direction == "LONG":
 
-            # Conservative rule:
-            # If SL and TP are both touched
-            # in the same candle, SL is treated first.
             if low <= sl:
 
-                send_sl_alert(state)
-
-                log_event(
-                    "SL_HIT",
-                    {
-                        "direction": direction,
-                        "price": sl,
-                        "time": str(timestamp)
-                    }
+                send_sl_alert(
+                    state
                 )
 
                 close_position(
@@ -1048,8 +1472,9 @@ def monitor_position(
                 return None
 
             if (
-                not state.get("tp1_hit", False)
-                and high >= tp1
+                not state["tp1_hit"]
+                and
+                high >= tp1
             ):
 
                 send_tp_alert(
@@ -1059,19 +1484,14 @@ def monitor_position(
 
                 state["tp1_hit"] = True
 
-                save_state(state)
-
-                log_event(
-                    "TP1_HIT",
-                    {
-                        "direction": direction,
-                        "price": tp1
-                    }
+                save_state(
+                    state
                 )
 
             if (
-                not state.get("tp2_hit", False)
-                and high >= tp2
+                not state["tp2_hit"]
+                and
+                high >= tp2
             ):
 
                 send_tp_alert(
@@ -1081,23 +1501,16 @@ def monitor_position(
 
                 state["tp2_hit"] = True
 
-                # Move SL to entry
                 state["sl"] = entry
 
-                save_state(state)
-
-                log_event(
-                    "TP2_HIT",
-                    {
-                        "direction": direction,
-                        "price": tp2,
-                        "new_sl": entry
-                    }
+                save_state(
+                    state
                 )
 
             if (
-                not state.get("tp3_hit", False)
-                and high >= tp3
+                not state["tp3_hit"]
+                and
+                high >= tp3
             ):
 
                 send_tp_alert(
@@ -1107,14 +1520,8 @@ def monitor_position(
 
                 state["tp3_hit"] = True
 
-                save_state(state)
-
-                log_event(
-                    "TP3_HIT",
-                    {
-                        "direction": direction,
-                        "price": tp3
-                    }
+                save_state(
+                    state
                 )
 
                 close_position(
@@ -1132,15 +1539,8 @@ def monitor_position(
 
             if high >= sl:
 
-                send_sl_alert(state)
-
-                log_event(
-                    "SL_HIT",
-                    {
-                        "direction": direction,
-                        "price": sl,
-                        "time": str(timestamp)
-                    }
+                send_sl_alert(
+                    state
                 )
 
                 close_position(
@@ -1151,8 +1551,9 @@ def monitor_position(
                 return None
 
             if (
-                not state.get("tp1_hit", False)
-                and low <= tp1
+                not state["tp1_hit"]
+                and
+                low <= tp1
             ):
 
                 send_tp_alert(
@@ -1162,19 +1563,14 @@ def monitor_position(
 
                 state["tp1_hit"] = True
 
-                save_state(state)
-
-                log_event(
-                    "TP1_HIT",
-                    {
-                        "direction": direction,
-                        "price": tp1
-                    }
+                save_state(
+                    state
                 )
 
             if (
-                not state.get("tp2_hit", False)
-                and low <= tp2
+                not state["tp2_hit"]
+                and
+                low <= tp2
             ):
 
                 send_tp_alert(
@@ -1184,23 +1580,16 @@ def monitor_position(
 
                 state["tp2_hit"] = True
 
-                # Move SL to entry
                 state["sl"] = entry
 
-                save_state(state)
-
-                log_event(
-                    "TP2_HIT",
-                    {
-                        "direction": direction,
-                        "price": tp2,
-                        "new_sl": entry
-                    }
+                save_state(
+                    state
                 )
 
             if (
-                not state.get("tp3_hit", False)
-                and low <= tp3
+                not state["tp3_hit"]
+                and
+                low <= tp3
             ):
 
                 send_tp_alert(
@@ -1210,14 +1599,8 @@ def monitor_position(
 
                 state["tp3_hit"] = True
 
-                save_state(state)
-
-                log_event(
-                    "TP3_HIT",
-                    {
-                        "direction": direction,
-                        "price": tp3
-                    }
+                save_state(
+                    state
                 )
 
                 close_position(
@@ -1236,14 +1619,17 @@ def monitor_position(
 
 def is_cooldown_active(state):
 
-    if state.get("status") != "cooldown":
+    if state.get(
+        "status"
+    ) != "cooldown":
+
         return False
 
-    cooldown_until = state.get(
+    value = state.get(
         "cooldown_until"
     )
 
-    if not cooldown_until:
+    if not value:
         return False
 
     try:
@@ -1251,12 +1637,13 @@ def is_cooldown_active(state):
         now = pd.Timestamp.utcnow()
 
         until = normalize_timestamp(
-            cooldown_until
+            value
         )
 
         return now < until
 
     except Exception:
+
         return False
 
 
@@ -1272,13 +1659,6 @@ def main():
 
     state = load_state()
 
-    # Migrate old state
-    state = migrate_state(state)
-
-    # --------------------------------------------------------
-    # Download data
-    # --------------------------------------------------------
-
     (
         df_1h,
         df_15m,
@@ -1293,48 +1673,72 @@ def main():
         df_1m.empty
     ):
 
-        print("Market data unavailable.")
+        print(
+            "ERROR: Market data unavailable."
+        )
+
         return
 
-    # Remove incomplete bars
-    df_1h = remove_incomplete_bar(df_1h)
-    df_15m = remove_incomplete_bar(df_15m)
-    df_5m = remove_incomplete_bar(df_5m)
-    df_1m = remove_incomplete_bar(df_1m)
+    # Remove current incomplete candles
 
-    # --------------------------------------------------------
-    # Existing position
-    # --------------------------------------------------------
+    df_1h = remove_incomplete_bar(
+        df_1h
+    )
 
-    if state.get("status") == "active":
+    df_15m = remove_incomplete_bar(
+        df_15m
+    )
 
-        print("Active position detected.")
+    df_5m = remove_incomplete_bar(
+        df_5m
+    )
 
-        state = monitor_position(
+    df_1m = remove_incomplete_bar(
+        df_1m
+    )
+
+    # ========================================================
+    # ACTIVE POSITION
+    # ========================================================
+
+    if state.get(
+        "status"
+    ) == "active":
+
+        print(
+            "Active position detected."
+        )
+
+        result = monitor_position(
             state,
             df_1m
         )
 
-        if state is None:
-            return
+        if result is not None:
 
-        save_state(state)
-
-        return
-
-    # --------------------------------------------------------
-    # Cooldown
-    # --------------------------------------------------------
-
-    if is_cooldown_active(state):
-
-        print("Cooldown active.")
+            save_state(
+                result
+            )
 
         return
 
-    # --------------------------------------------------------
-    # New signal
-    # --------------------------------------------------------
+    # ========================================================
+    # COOLDOWN
+    # ========================================================
+
+    if is_cooldown_active(
+        state
+    ):
+
+        print(
+            "Cooldown active."
+        )
+
+        return
+
+    # ========================================================
+    # FIND NEW SIGNAL
+    # ========================================================
 
     signal = find_entry_signal(
         df_1h,
@@ -1344,37 +1748,24 @@ def main():
 
     if signal is None:
 
-        print("No valid signal.")
-
         return
 
-    # --------------------------------------------------------
-    # Save signal BEFORE Telegram
-    # --------------------------------------------------------
+    # ========================================================
+    # SAVE SIGNAL
+    # ========================================================
 
-    save_state(signal)
+    save_state(
+        signal
+    )
 
     log_event(
         "ENTRY_SIGNAL",
-        {
-            "direction": signal["direction"],
-            "entry": signal["entry"],
-            "sl": signal["sl"],
-            "tp1": signal["tp1"],
-            "tp2": signal["tp2"],
-            "tp3": signal["tp3"],
-            "risk": signal["risk"],
-            "rsi": signal["rsi"],
-            "adx": signal["adx"],
-            "atr": signal["atr"],
-            "signal_time": signal["signal_time"],
-            "reason": signal["reason"]
-        }
+        signal
     )
 
-    # --------------------------------------------------------
-    # Telegram
-    # --------------------------------------------------------
+    # ========================================================
+    # TELEGRAM
+    # ========================================================
 
     success = send_entry_alert(
         signal
@@ -1382,15 +1773,23 @@ def main():
 
     if success:
 
-        signal["entry_alert_sent"] = True
+        signal[
+            "entry_alert_sent"
+        ] = True
 
-        save_state(signal)
+        save_state(
+            signal
+        )
 
-        print("Entry alert sent.")
+        print(
+            "Entry alert sent successfully."
+        )
 
     else:
 
-        print("Entry alert failed.")
+        print(
+            "Entry alert failed."
+        )
 
 
 # ============================================================
@@ -1398,4 +1797,5 @@ def main():
 # ============================================================
 
 if __name__ == "__main__":
+
     main()
