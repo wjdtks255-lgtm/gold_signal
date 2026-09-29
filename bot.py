@@ -4,11 +4,12 @@ import requests
 import yfinance as yf
 import pandas as pd
 import numpy as np
+from datetime import datetime, timezone, timedelta
 
 
 # ============================================================
 # GOLD FUTURES SMART SIGNAL BOT
-# Scoring & Flexible Condition Version (Korean Localized)
+# Scoring & Flexible Condition Version (KST & Korean Localized)
 # ============================================================
 
 TICKER = "GC=F"
@@ -88,6 +89,16 @@ def normalize_timestamp(value):
     else:
         ts = ts.tz_convert("UTC")
     return ts
+
+def format_kst_time(iso_str):
+    """UTC ISO 문자열을 받아 KST(한국 시간) 문자열로 변환합니다."""
+    try:
+        dt_utc = datetime.fromisoformat(iso_str)
+        kst_zone = timezone(timedelta(hours=9))
+        dt_kst = dt_utc.astimezone(kst_zone)
+        return dt_kst.strftime("%Y-%m-%d %H:%M:%S (KST)")
+    except Exception:
+        return iso_str
 
 def load_state():
     if not os.path.exists(STATE_FILE):
@@ -365,13 +376,14 @@ def find_signal(h1, m15, m5):
 
 
 # ============================================================
-# FORMAT SIGNAL & MONITOR POSITION (한글화 적용)
+# FORMAT SIGNAL & MONITOR POSITION (KST & 한글화 적용)
 # ============================================================
 
 def format_entry_message(signal):
     direction = signal["direction"]
     emoji = "🟢" if direction == "LONG" else "🔴"
     title = "롱 포지션 시그널 (스마트 점수제)" if direction == "LONG" else "숏 포지션 시그널 (스마트 점수제)"
+    kst_time_str = format_kst_time(signal['signal_time'])
 
     return f"""
 👑 <b>골드 선물 스마트 시그널</b>
@@ -406,8 +418,8 @@ def format_entry_message(signal):
 🧠 <b>진입 근거</b>
 {signal['reason']}
 
-🕐 시그널 발생 시간
-<code>{signal['signal_time']}</code>
+🕐 시그널 발생 시간 (KST)
+<code>{kst_time_str}</code>
 
 📊 <a href="https://www.tradingview.com/symbols/GC1!/">트레이딩뷰 골드 차트</a>
 """
@@ -428,10 +440,11 @@ def monitor_position(state, m1):
     for idx, row in data.iterrows():
         high, low = float(row["High"]), float(row["Low"])
         candle_time = normalize_timestamp(idx)
+        kst_candle_time = format_kst_time(candle_time.isoformat())
 
         if direction == "LONG":
             if low <= sl:
-                send_telegram(f"🛑 <b>롱 포지션 손절가 도달 (SL)</b>\n\n진입가: <code>${entry:,.2f}</code>\n손절가: <code>${sl:,.2f}</code>\n시간: <code>{candle_time}</code>")
+                send_telegram(f"🛑 <b>롱 포지션 손절가 도달 (SL)</b>\n\n진입가: <code>${entry:,.2f}</code>\n손절가: <code>${sl:,.2f}</code>\n시간: <code>{kst_candle_time}</code>")
                 log_event("LONG_SL", state)
                 state["status"] = "cooldown"
                 state["cooldown_until"] = (pd.Timestamp.now(tz="UTC") + pd.Timedelta(minutes=COOLDOWN_MINUTES)).isoformat()
@@ -461,7 +474,7 @@ def monitor_position(state, m1):
                 return state
         else:
             if high >= sl:
-                send_telegram(f"🛑 <b>숏 포지션 손절가 도달 (SL)</b>\n\n진입가: <code>${entry:,.2f}</code>\n손절가: <code>${sl:,.2f}</code>\n시간: <code>{candle_time}</code>")
+                send_telegram(f"🛑 <b>숏 포지션 손절가 도달 (SL)</b>\n\n진입가: <code>${entry:,.2f}</code>\n손절가: <code>${sl:,.2f}</code>\n시간: <code>{kst_candle_time}</code>")
                 log_event("SHORT_SL", state)
                 state["status"] = "cooldown"
                 state["cooldown_until"] = (pd.Timestamp.now(tz="UTC") + pd.Timedelta(minutes=COOLDOWN_MINUTES)).isoformat()
