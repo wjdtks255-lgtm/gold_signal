@@ -1,1 +1,19 @@
-{}
+{
+  "active": true,
+  "direction": "LONG",
+  "mode": "M15 STRONG",
+  "entry": 4189.7998046875,
+  "sl": 4178.012406246616,
+  "original_sl": 4178.012406246616,
+  "tp1": 4203.944682816561,
+  "tp2": 4213.374601569269,
+  "tp3": 4225.162000010153,
+  "risk": 11.787398440884317,
+  "tp1_hit": false,
+  "tp2_hit": false,
+  "tp3_hit": false,
+  "entry_alert_sent": false,
+  "entry_time": "2026-09-29T23:16:03.162224+09:00",
+  "signal_time": "2026-09-29T09:45:00-04:00",
+  "last_signal_time": "2026-09-29T09:45:00-04:00"
+}
