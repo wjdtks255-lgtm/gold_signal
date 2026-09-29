@@ -142,5 +142,15 @@
       "exit": 4202.2001953125,
       "pnl_percent": -0.3270907320639847
     }
+  },
+  {
+    "time": "2026-09-30T03:43:13.317490+09:00",
+    "event": "PULLBACK_SIGNAL",
+    "data": {
+      "direction": "LONG",
+      "signal_price": 4198.89990234375,
+      "pullback_low": 4195.066289406862,
+      "pullback_high": 4198.047988357775
+    }
   }
 ]
