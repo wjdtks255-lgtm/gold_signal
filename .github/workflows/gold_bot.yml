@@ -4,7 +4,6 @@ on:
   workflow_dispatch:
 
   schedule:
-    # Every 5 minutes
     - cron: "*/5 * * * *"
 
 permissions:
@@ -15,6 +14,7 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+
   run-bot:
 
     runs-on: ubuntu-latest
@@ -23,9 +23,9 @@ jobs:
 
     steps:
 
-      # ======================================================
+      # ==========================================
       # CHECKOUT
-      # ======================================================
+      # ==========================================
 
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -33,9 +33,9 @@ jobs:
           fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      # ======================================================
+      # ==========================================
       # PYTHON
-      # ======================================================
+      # ==========================================
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -43,18 +43,18 @@ jobs:
           python-version: "3.11"
           cache: "pip"
 
-      # ======================================================
+      # ==========================================
       # INSTALL
-      # ======================================================
+      # ==========================================
 
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      # ======================================================
+      # ==========================================
       # RUN BOT
-      # ======================================================
+      # ==========================================
 
       - name: Run Gold Futures Smart Signal Bot
         env:
@@ -63,20 +63,26 @@ jobs:
         run: |
           python bot.py
 
-      # ======================================================
-      # SAVE STATE / LOG
-      # ======================================================
+      # ==========================================
+      # SAVE STATE
+      # ==========================================
 
       - name: Save bot state and logs
         run: |
+
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
           git add signal_state.json bot_log.json
 
           if git diff --cached --quiet; then
+
             echo "No state or log changes."
+
           else
+
             git commit -m "Update gold bot state and logs"
+
             git push
+
           fi
