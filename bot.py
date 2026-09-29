@@ -8,7 +8,7 @@ import numpy as np
 
 # ============================================================
 # GOLD FUTURES SMART SIGNAL BOT
-# Scoring & Flexible Condition Version
+# Scoring & Flexible Condition Version (Korean Localized)
 # ============================================================
 
 TICKER = "GC=F"
@@ -253,7 +253,7 @@ def find_signal(h1, m15, m5):
     # --------------------------------------------------------
     # LONG 점수 산정 (필수 2개 + 보조 중 3개 이상 만족 시 신호)
     # --------------------------------------------------------
-    h1_bull_base = (h["Close"] > h["EMA20"] or h["EMA20"] >= h["EMA50"])  # 완화된 1시간 추세
+    h1_bull_base = (h["Close"] > h["EMA20"] or h["EMA20"] >= h["EMA50"])
     long_distance = abs(price - ema20) <= atr * MAX_ENTRY_DISTANCE_ATR
 
     long_score = 0
@@ -274,7 +274,7 @@ def find_signal(h1, m15, m5):
     # --------------------------------------------------------
     # SHORT 점수 산정 (필수 2개 + 보조 중 3개 이상 만족 시 신호)
     # --------------------------------------------------------
-    h1_bear_base = (h["Close"] < h["EMA20"] or h["EMA20"] <= h["EMA50"])  # 완화된 1시간 추세
+    h1_bear_base = (h["Close"] < h["EMA20"] or h["EMA20"] <= h["EMA50"])
     short_distance = abs(price - ema20) <= atr * MAX_ENTRY_DISTANCE_ATR
 
     short_score = 0
@@ -309,13 +309,13 @@ def find_signal(h1, m15, m5):
         entry = price
         swing_low = float(m15["Low"].iloc[-4:-1].min())
         sl = swing_low - atr * 0.25
-        reason = f"1H Bullish trend + 15M Score {long_score}/5 (RSI: {rsi:.1f}, ADX: {adx:.1f})"
+        reason = f"1시간 상승 추세 + 15분봉 점수 {long_score}/5 (RSI: {rsi:.1f}, ADX: {adx:.1f})"
     else:
         direction = "SHORT"
         entry = price
         swing_high = float(m15["High"].iloc[-4:-1].max())
         sl = swing_high + atr * 0.25
-        reason = f"1H Bearish trend + 15M Score {short_score}/5 (RSI: {rsi:.1f}, ADX: {adx:.1f})"
+        reason = f"1시간 하락 추세 + 15분봉 점수 {short_score}/5 (RSI: {rsi:.1f}, ADX: {adx:.1f})"
 
     risk = abs(entry - sl)
     if risk <= 0 or risk > atr * MAX_SL_ATR:
@@ -365,34 +365,34 @@ def find_signal(h1, m15, m5):
 
 
 # ============================================================
-# FORMAT SIGNAL & MONITOR POSITION
+# FORMAT SIGNAL & MONITOR POSITION (한글화 적용)
 # ============================================================
 
 def format_entry_message(signal):
     direction = signal["direction"]
     emoji = "🟢" if direction == "LONG" else "🔴"
-    title = "LONG SIGNAL (SMART SCORE)" if direction == "LONG" else "SHORT SIGNAL (SMART SCORE)"
+    title = "롱 포지션 시그널 (스마트 점수제)" if direction == "LONG" else "숏 포지션 시그널 (스마트 점수제)"
 
     return f"""
-👑 <b>GOLD FUTURES SMART SIGNAL</b>
+👑 <b>골드 선물 스마트 시그널</b>
 
 {emoji} <b>{title}</b>
 
 ━━━━━━━━━━━━━━━━━━
 
-💰 <b>ENTRY</b>
+💰 <b>진입가 (ENTRY)</b>
 <code>${signal['entry']:,.2f}</code>
 
-🛑 <b>SL</b>
+🛑 <b>손절가 (SL)</b>
 <code>${signal['sl']:,.2f}</code>
 
-🎯 <b>TP1</b>
+🎯 <b>1차 목표가 (TP1)</b>
 <code>${signal['tp1']:,.2f}</code>
 
-🎯 <b>TP2</b>
+🎯 <b>2차 목표가 (TP2)</b>
 <code>${signal['tp2']:,.2f}</code>
 
-🎯 <b>TP3</b>
+🎯 <b>3차 목표가 (TP3)</b>
 <code>${signal['tp3']:,.2f}</code>
 
 ━━━━━━━━━━━━━━━━━━
@@ -401,15 +401,15 @@ def format_entry_message(signal):
 📈 ADX : <code>{signal['adx']:.2f}</code>
 📏 ATR : <code>{signal['atr']:.2f}</code>
 
-⚖️ Risk : <code>{signal['risk']:.2f}</code>
+⚖️ 리스크 : <code>{signal['risk']:.2f}</code>
 
-🧠 <b>Reason</b>
+🧠 <b>진입 근거</b>
 {signal['reason']}
 
-🕐 Signal Time
+🕐 시그널 발생 시간
 <code>{signal['signal_time']}</code>
 
-📊 <a href="https://www.tradingview.com/symbols/GC1!/">TradingView Gold</a>
+📊 <a href="https://www.tradingview.com/symbols/GC1!/">트레이딩뷰 골드 차트</a>
 """
 
 def monitor_position(state, m1):
@@ -431,7 +431,7 @@ def monitor_position(state, m1):
 
         if direction == "LONG":
             if low <= sl:
-                send_telegram(f"🛑 <b>LONG STOP LOSS</b>\nEntry: <code>${entry:,.2f}</code>\nSL: <code>${sl:,.2f}</code>")
+                send_telegram(f"🛑 <b>롱 포지션 손절가 도달 (SL)</b>\n\n진입가: <code>${entry:,.2f}</code>\n손절가: <code>${sl:,.2f}</code>\n시간: <code>{candle_time}</code>")
                 log_event("LONG_SL", state)
                 state["status"] = "cooldown"
                 state["cooldown_until"] = (pd.Timestamp.now(tz="UTC") + pd.Timedelta(minutes=COOLDOWN_MINUTES)).isoformat()
@@ -439,20 +439,20 @@ def monitor_position(state, m1):
                 return state
 
             if not state["tp1_hit"] and high >= tp1:
-                send_telegram(f"🎯 <b>LONG TP1 HIT</b>\nTP1: <code>${tp1:,.2f}</code>\nEntry: <code>${entry:,.2f}</code>")
+                send_telegram(f"🎯 <b>1차 목표가 도달 (TP1)</b>\n\n1차 TP: <code>${tp1:,.2f}</code>\n진입가: <code>${entry:,.2f}</code>")
                 state["tp1_hit"] = True
                 log_event("LONG_TP1", state)
                 save_state(state)
 
             if not state["tp2_hit"] and high >= tp2:
-                send_telegram(f"🎯 <b>LONG TP2 HIT</b>\nTP2: <code>${tp2:,.2f}</code>\n🔒 SL moved to BREAK-EVEN (<code>${entry:,.2f}</code>)")
+                send_telegram(f"🎯 <b>2차 목표가 도달 (TP2)</b>\n\n2차 TP: <code>${tp2:,.2f}</code>\n🔒 스탑로스가 본절가로 이동되었습니다 (<code>${entry:,.2f}</code>)")
                 state["tp2_hit"] = True
                 state["sl"] = entry
                 log_event("LONG_TP2", state)
                 save_state(state)
 
             if not state["tp3_hit"] and high >= tp3:
-                send_telegram(f"🏆 <b>LONG TP3 HIT</b>\nTP3: <code>${tp3:,.2f}</code>\nPosition completed.")
+                send_telegram(f"🏆 <b>3차 목표가 도달 (TP3)</b>\n\n3차 TP: <code>${tp3:,.2f}</code>\n포지션이 성공적으로 완료되었습니다. 🔥")
                 state["tp3_hit"] = True
                 state["status"] = "cooldown"
                 state["cooldown_until"] = (candle_time + pd.Timedelta(minutes=COOLDOWN_MINUTES)).isoformat()
@@ -461,7 +461,7 @@ def monitor_position(state, m1):
                 return state
         else:
             if high >= sl:
-                send_telegram(f"🛑 <b>SHORT STOP LOSS</b>\nEntry: <code>${entry:,.2f}</code>\nSL: <code>${sl:,.2f}</code>")
+                send_telegram(f"🛑 <b>숏 포지션 손절가 도달 (SL)</b>\n\n진입가: <code>${entry:,.2f}</code>\n손절가: <code>${sl:,.2f}</code>\n시간: <code>{candle_time}</code>")
                 log_event("SHORT_SL", state)
                 state["status"] = "cooldown"
                 state["cooldown_until"] = (pd.Timestamp.now(tz="UTC") + pd.Timedelta(minutes=COOLDOWN_MINUTES)).isoformat()
@@ -469,20 +469,20 @@ def monitor_position(state, m1):
                 return state
 
             if not state["tp1_hit"] and low <= tp1:
-                send_telegram(f"🎯 <b>SHORT TP1 HIT</b>\nTP1: <code>${tp1:,.2f}</code>\nEntry: <code>${entry:,.2f}</code>")
+                send_telegram(f"🎯 <b>1차 목표가 도달 (TP1)</b>\n\n1차 TP: <code>${tp1:,.2f}</code>\n진입가: <code>${entry:,.2f}</code>")
                 state["tp1_hit"] = True
                 log_event("SHORT_TP1", state)
                 save_state(state)
 
             if not state["tp2_hit"] and low <= tp2:
-                send_telegram(f"🎯 <b>SHORT TP2 HIT</b>\nTP2: <code>${tp2:,.2f}</code>\n🔒 SL moved to BREAK-EVEN (<code>${entry:,.2f}</code>)")
+                send_telegram(f"🎯 <b>2차 목표가 도달 (TP2)</b>\n\n2차 TP: <code>${tp2:,.2f}</code>\n🔒 스탑로스가 본절가로 이동되었습니다 (<code>${entry:,.2f}</code>)")
                 state["tp2_hit"] = True
                 state["sl"] = entry
                 log_event("SHORT_TP2", state)
                 save_state(state)
 
             if not state["tp3_hit"] and low <= tp3:
-                send_telegram(f"🏆 <b>SHORT TP3 HIT</b>\nTP3: <code>${tp3:,.2f}</code>\nPosition completed.")
+                send_telegram(f"🏆 <b>3차 목표가 도달 (TP3)</b>\n\n3차 TP: <code>${tp3:,.2f}</code>\n포지션이 성공적으로 완료되었습니다. 🔥")
                 state["tp3_hit"] = True
                 state["status"] = "cooldown"
                 state["cooldown_until"] = (candle_time + pd.Timedelta(minutes=COOLDOWN_MINUTES)).isoformat()
