@@ -157,5 +157,15 @@
     "time": "2026-09-30T05:19:14.873906+09:00",
     "event": "PENDING_TIMEOUT",
     "data": {}
+  },
+  {
+    "time": "2026-09-30T05:35:25.846045+09:00",
+    "event": "PULLBACK_SIGNAL",
+    "data": {
+      "direction": "LONG",
+      "signal_price": 4204.7998046875,
+      "pullback_low": 4201.243708686516,
+      "pullback_high": 4204.009561131726
+    }
   }
 ]

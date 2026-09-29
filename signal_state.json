@@ -1,13 +1,13 @@
 {
   "version": "11.2.1",
-  "status": "NONE",
-  "direction": null,
-  "signal_price": null,
-  "pullback_low": null,
-  "pullback_high": null,
+  "status": "PENDING",
+  "direction": "LONG",
+  "signal_price": 4204.7998046875,
+  "pullback_low": 4201.243708686516,
+  "pullback_high": 4204.009561131726,
   "pullback_touched": false,
-  "signal_time": null,
-  "pending_time": null,
+  "signal_time": "2026-09-30T05:35:25.256066+09:00",
+  "pending_time": "2026-09-30T05:35:25.256076+09:00",
   "entry": null,
   "sl": null,
   "tp1": null,
@@ -16,7 +16,7 @@
   "tp1_hit": false,
   "tp2_hit": false,
   "tp3_hit": false,
-  "pending_alert_sent": false,
+  "pending_alert_sent": true,
   "entry_alert_sent": false,
-  "last_update": "2026-09-30T05:19:14.949203+09:00"
+  "last_update": "2026-09-30T05:35:25.845319+09:00"
 }
