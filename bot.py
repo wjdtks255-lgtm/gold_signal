@@ -9,29 +9,16 @@ import requests
 
 
 # ============================================================
-# GOLD FUTURES SMART SIGNAL BOT V11.2
-#
-# SIGNAL
-#   ↓
-# PULLBACK PENDING
-#   ↓
-# ENTRY CONFIRM
-#   ↓
-# ACTIVE
-#   ↓
-# SL / TP1 / TP2 / TP3
-#
-# M15 LEAD + 5M SUPPORT
-# H1 CONTEXT ONLY
+# GOLD FUTURES SMART SIGNAL BOT V11.2.1
 # ============================================================
 
 print("====================================")
 print(" 금 선물 스마트 시그널 봇")
-print(" BALANCED V11.2")
+print(" BALANCED V11.2.1")
 print(" SIGNAL -> PULLBACK -> ACTIVE")
 print(" M15 LEAD + 5M SUPPORT")
 print(" H1 CONTEXT ONLY")
-print(" PULLBACK CONFIRM ENTRY")
+print(" COMPLETED CANDLE MODE")
 print("====================================")
 
 
@@ -44,15 +31,17 @@ TICKER = "GC=F"
 STATE_FILE = "signal_state.json"
 LOG_FILE = "bot_log.json"
 
-STATE_VERSION = "11.2"
+STATE_VERSION = "11.2.1"
 
 
 # ------------------------------------------------------------
-# Signal quality
+# Signal
 # ------------------------------------------------------------
 
 MIN_M15_SCORE = 4
 STRONG_M15_SCORE = 5
+
+MIN_5M_SCORE = 2
 
 LONG_RSI_MIN = 52
 LONG_RSI_MAX = 70
@@ -67,7 +56,7 @@ MIN_ADX = 13
 # Distance
 # ------------------------------------------------------------
 
-MAX_ENTRY_DISTANCE_ATR = 2.00
+MAX_ENTRY_DISTANCE_ATR = 2.0
 MAX_SIGNAL_MOVE_ATR = 1.35
 
 
@@ -83,24 +72,13 @@ PENDING_TIMEOUT_MINUTES = 90
 
 
 # ------------------------------------------------------------
-# Entry confirmation
-# ------------------------------------------------------------
-
-# Pullback must happen first.
-REQUIRE_PULLBACK = True
-
-# After pullback, 5M needs at least this score.
-MIN_ENTRY_5M_SCORE = 2
-
-
-# ------------------------------------------------------------
 # Risk
 # ------------------------------------------------------------
 
+RISK_ATR_MULT = 1.35
+
 ATR_RISK_MIN = 0.55
 ATR_RISK_MAX = 2.50
-
-RISK_ATR_MULT = 1.35
 
 
 # ------------------------------------------------------------
@@ -112,11 +90,19 @@ TP2_R = 2.00
 TP3_R = 3.00
 
 
-# ------------------------------------------------------------
-# Cooldown
-# ------------------------------------------------------------
+# ============================================================
+# TIME
+# ============================================================
 
-COOLDOWN_MINUTES = 60
+KST = timezone(timedelta(hours=9))
+
+
+def now_kst():
+    return datetime.now(KST)
+
+
+def now_iso():
+    return now_kst().isoformat()
 
 
 # ============================================================
@@ -156,53 +142,25 @@ def send_telegram(message):
         )
 
         if response.status_code == 200:
-
             print("Telegram sent successfully.")
-
             return True
 
-        print(
-            "Telegram error:",
-            response.text
-        )
+        print("Telegram error:", response.text)
 
     except Exception as e:
 
-        print(
-            "Telegram exception:",
-            e
-        )
+        print("Telegram exception:", e)
 
     return False
 
 
 # ============================================================
-# TIME
-# ============================================================
-
-KST = timezone(
-    timedelta(hours=9)
-)
-
-
-def now_kst():
-
-    return datetime.now(KST)
-
-
-def now_iso():
-
-    return now_kst().isoformat()
-
-
-# ============================================================
-# DEFAULT STATE
+# STATE
 # ============================================================
 
 def default_state():
 
     return {
-
         "version": STATE_VERSION,
 
         "status": "NONE",
@@ -216,12 +174,10 @@ def default_state():
 
         "pullback_touched": False,
 
+        "signal_time": None,
         "pending_time": None,
 
-        "signal_time": None,
-
         "entry": None,
-
         "sl": None,
 
         "tp1": None,
@@ -232,23 +188,16 @@ def default_state():
         "tp2_hit": False,
         "tp3_hit": False,
 
-        "entry_alert_sent": False,
         "pending_alert_sent": False,
+        "entry_alert_sent": False,
 
         "last_update": None
     }
 
 
-# ============================================================
-# STATE LOAD
-# ============================================================
-
 def load_state():
 
-    if not os.path.exists(
-        STATE_FILE
-    ):
-
+    if not os.path.exists(STATE_FILE):
         return default_state()
 
     try:
@@ -262,7 +211,7 @@ def load_state():
             data = json.load(f)
 
         # ----------------------------------------------------
-        # Reset old V10 / V11 / V11.1 state.
+        # Reset old versions ONCE
         # ----------------------------------------------------
 
         if data.get("version") != STATE_VERSION:
@@ -271,43 +220,30 @@ def load_state():
             print("====================================")
             print(" OLD STATE RESET")
             print("====================================")
-
             print(
-                "기존 V10/V11/V11.1 상태를 "
-                "초기화합니다."
+                "기존 V10/V11/V11.2 상태를 초기화합니다."
             )
-
             print(
-                "V11.2 기준으로 현재 시장을 "
-                "새롭게 분석합니다."
+                "현재 시장을 새롭게 분석합니다."
             )
+            print("")
 
             return default_state()
 
-        base = default_state()
+        state = default_state()
+        state.update(data)
 
-        base.update(data)
-
-        return base
+        return state
 
     except Exception as e:
 
-        print(
-            "State load error:",
-            e
-        )
-
+        print("State load error:", e)
         return default_state()
 
-
-# ============================================================
-# STATE SAVE
-# ============================================================
 
 def save_state(state):
 
     state["version"] = STATE_VERSION
-
     state["last_update"] = now_iso()
 
     try:
@@ -327,26 +263,18 @@ def save_state(state):
 
     except Exception as e:
 
-        print(
-            "State save error:",
-            e
-        )
+        print("State save error:", e)
 
 
 # ============================================================
 # LOG
 # ============================================================
 
-def save_log(
-    event,
-    data=None
-):
+def save_log(event, data=None):
 
     logs = []
 
-    if os.path.exists(
-        LOG_FILE
-    ):
+    if os.path.exists(LOG_FILE):
 
         try:
 
@@ -363,13 +291,9 @@ def save_log(
             logs = []
 
     logs.append({
-
         "time": now_iso(),
-
         "event": event,
-
         "data": data or {}
-
     })
 
     logs = logs[-500:]
@@ -391,52 +315,30 @@ def save_log(
 
     except Exception as e:
 
-        print(
-            "Log save error:",
-            e
-        )
+        print("Log save error:", e)
 
 
 # ============================================================
-# DOWNLOAD
+# DOWNLOAD DATA
 # ============================================================
 
 def download_data():
 
     print("")
-    print(
-        "Downloading market data..."
-    )
+    print("Downloading market data...")
 
     data = {}
 
-    periods = {
-
-        "1h": (
-            "1h",
-            "730d"
-        ),
-
-        "15m": (
-            "15m",
-            "60d"
-        ),
-
-        "5m": (
-            "5m",
-            "60d"
-        ),
-
-        "1m": (
-            "1m",
-            "7d"
-        )
+    settings = {
+        "1h": ("1h", "730d"),
+        "15m": ("15m", "60d"),
+        "5m": ("5m", "60d"),
+        "1m": ("1m", "7d")
     }
 
-    for key, (
-        interval,
-        period
-    ) in periods.items():
+    for name, values in settings.items():
+
+        interval, period = values
 
         try:
 
@@ -448,15 +350,9 @@ def download_data():
                 progress=False
             )
 
-            if (
-                df is None
-                or df.empty
-            ):
+            if df is None or df.empty:
 
-                print(
-                    f"{key}: NO DATA"
-                )
-
+                print(f"{name}: NO DATA")
                 continue
 
             if isinstance(
@@ -471,17 +367,17 @@ def download_data():
 
             df = df.dropna()
 
-            data[key] = df
+            data[name] = df
 
             print(
-                f"{key}: "
+                f"{name}: "
                 f"{len(df)} candles"
             )
 
         except Exception as e:
 
             print(
-                f"{key}: ERROR -> {e}"
+                f"{name}: ERROR -> {e}"
             )
 
     return data
@@ -491,10 +387,7 @@ def download_data():
 # INDICATORS
 # ============================================================
 
-def ema(
-    series,
-    length
-):
+def ema(series, length):
 
     return series.ewm(
         span=length,
@@ -502,20 +395,12 @@ def ema(
     ).mean()
 
 
-def rsi(
-    series,
-    length=14
-):
+def rsi(series, length=14):
 
     delta = series.diff()
 
-    gain = delta.clip(
-        lower=0
-    )
-
-    loss = -delta.clip(
-        upper=0
-    )
+    gain = delta.clip(lower=0)
+    loss = -delta.clip(upper=0)
 
     avg_gain = gain.ewm(
         alpha=1 / length,
@@ -536,43 +421,30 @@ def rsi(
         )
     )
 
-    return (
-        100
-        -
-        (
-            100
-            /
-            (1 + rs)
-        )
+    return 100 - (
+        100 /
+        (1 + rs)
     )
 
 
-def atr(
-    df,
-    length=14
-):
+def atr(df, length=14):
 
     high = df["High"]
     low = df["Low"]
     close = df["Close"]
 
-    prev_close = close.shift(1)
+    previous_close = close.shift(1)
 
     tr1 = high - low
-
     tr2 = (
-        high
-        -
-        prev_close
+        high - previous_close
     ).abs()
 
     tr3 = (
-        low
-        -
-        prev_close
+        low - previous_close
     ).abs()
 
-    tr = pd.concat(
+    true_range = pd.concat(
         [
             tr1,
             tr2,
@@ -581,32 +453,25 @@ def atr(
         axis=1
     ).max(axis=1)
 
-    return tr.ewm(
+    return true_range.ewm(
         alpha=1 / length,
         adjust=False
     ).mean()
 
 
-def adx(
-    df,
-    length=14
-):
+def adx(df, length=14):
 
     high = df["High"]
     low = df["Low"]
     close = df["Close"]
 
     up_move = high.diff()
-
     down_move = -low.diff()
 
     plus_dm = pd.Series(
         np.where(
-            (
-                (up_move > down_move)
-                &
-                (up_move > 0)
-            ),
+            (up_move > down_move)
+            & (up_move > 0),
             up_move,
             0
         ),
@@ -615,80 +480,60 @@ def adx(
 
     minus_dm = pd.Series(
         np.where(
-            (
-                (down_move > up_move)
-                &
-                (down_move > 0)
-            ),
+            (down_move > up_move)
+            & (down_move > 0),
             down_move,
             0
         ),
         index=df.index
     )
 
-    prev_close = close.shift(1)
+    previous_close = close.shift(1)
 
-    tr = pd.concat(
+    true_range = pd.concat(
         [
             high - low,
             (
-                high
-                -
-                prev_close
+                high - previous_close
             ).abs(),
             (
-                low
-                -
-                prev_close
+                low - previous_close
             ).abs()
         ],
         axis=1
     ).max(axis=1)
 
-    atr_value = tr.ewm(
+    atr_value = true_range.ewm(
         alpha=1 / length,
         adjust=False
     ).mean()
 
     plus_di = (
         100
-        *
-        plus_dm.ewm(
+        * plus_dm.ewm(
             alpha=1 / length,
             adjust=False
         ).mean()
-        /
-        atr_value
+        / atr_value
     )
 
     minus_di = (
         100
-        *
-        minus_dm.ewm(
+        * minus_dm.ewm(
             alpha=1 / length,
             adjust=False
         ).mean()
-        /
-        atr_value
+        / atr_value
     )
+
+    denominator = (
+        plus_di + minus_di
+    ).replace(0, np.nan)
 
     dx = (
         100
-        *
-        (
-            plus_di
-            -
-            minus_di
-        ).abs()
-        /
-        (
-            plus_di
-            +
-            minus_di
-        ).replace(
-            0,
-            np.nan
-        )
+        * (plus_di - minus_di).abs()
+        / denominator
     )
 
     return dx.ewm(
@@ -698,20 +543,39 @@ def adx(
 
 
 # ============================================================
+# COMPLETED CANDLE
+# ============================================================
+
+def completed_df(df):
+
+    if len(df) < 5:
+        return df.copy()
+
+    # Last candle may still be forming.
+    return df.iloc[:-1].copy()
+
+
+# ============================================================
 # MARKET ANALYSIS
 # ============================================================
 
-def analyze_market(
-    data
-):
+def analyze_market(data):
 
-    m15 = data["15m"].copy()
-    m5 = data["5m"].copy()
-    h1 = data["1h"].copy()
+    m15 = completed_df(
+        data["15m"]
+    )
 
-    # --------------------------------------------------------
+    m5 = completed_df(
+        data["5m"]
+    )
+
+    h1 = completed_df(
+        data["1h"]
+    )
+
+    # ========================================================
     # M15
-    # --------------------------------------------------------
+    # ========================================================
 
     m15["EMA20"] = ema(
         m15["Close"],
@@ -727,44 +591,27 @@ def analyze_market(
         m15["Close"]
     )
 
-    m15["ADX"] = adx(
-        m15
-    )
+    m15["ADX"] = adx(m15)
 
-    m15["ATR"] = atr(
-        m15
-    )
+    m15["ATR"] = atr(m15)
 
     last15 = m15.iloc[-1]
-    prev15 = m15.iloc[-2]
+    previous15 = m15.iloc[-2]
 
-    close15 = float(
-        last15["Close"]
+    close15 = float(last15["Close"])
+    ema20_15 = float(last15["EMA20"])
+    ema50_15 = float(last15["EMA50"])
+    rsi15 = float(last15["RSI"])
+    adx15 = float(last15["ADX"])
+    atr15 = float(last15["ATR"])
+
+    previous_close15 = float(
+        previous15["Close"]
     )
 
-    ema20_15 = float(
-        last15["EMA20"]
-    )
-
-    ema50_15 = float(
-        last15["EMA50"]
-    )
-
-    rsi15 = float(
-        last15["RSI"]
-    )
-
-    adx15 = float(
-        last15["ADX"]
-    )
-
-    atr15 = float(
-        last15["ATR"]
-    )
-
-    # --------------------------------------------------------
+    # ========================================================
     # 5M
-    # --------------------------------------------------------
+    # ========================================================
 
     m5["EMA20"] = ema(
         m5["Close"],
@@ -782,25 +629,14 @@ def analyze_market(
 
     last5 = m5.iloc[-1]
 
-    close5 = float(
-        last5["Close"]
-    )
+    close5 = float(last5["Close"])
+    ema20_5 = float(last5["EMA20"])
+    ema50_5 = float(last5["EMA50"])
+    rsi5 = float(last5["RSI"])
 
-    ema20_5 = float(
-        last5["EMA20"]
-    )
-
-    ema50_5 = float(
-        last5["EMA50"]
-    )
-
-    rsi5 = float(
-        last5["RSI"]
-    )
-
-    # --------------------------------------------------------
+    # ========================================================
     # H1
-    # --------------------------------------------------------
+    # ========================================================
 
     h1["EMA20"] = ema(
         h1["Close"],
@@ -814,17 +650,9 @@ def analyze_market(
 
     last1h = h1.iloc[-1]
 
-    close1h = float(
-        last1h["Close"]
-    )
-
-    ema20_1h = float(
-        last1h["EMA20"]
-    )
-
-    ema50_1h = float(
-        last1h["EMA50"]
-    )
+    close1h = float(last1h["Close"])
+    ema20_1h = float(last1h["EMA20"])
+    ema50_1h = float(last1h["EMA50"])
 
     # ========================================================
     # M15 SCORE
@@ -833,7 +661,7 @@ def analyze_market(
     long_score = 0
     short_score = 0
 
-    # Price vs EMA20
+    # Price / EMA20
 
     if close15 > ema20_15:
         long_score += 1
@@ -856,7 +684,6 @@ def analyze_market(
         <= rsi15
         <= LONG_RSI_MAX
     ):
-
         long_score += 1
 
     if (
@@ -864,7 +691,6 @@ def analyze_market(
         <= rsi15
         <= SHORT_RSI_MAX
     ):
-
         short_score += 1
 
     # ADX
@@ -879,36 +705,26 @@ def analyze_market(
 
     # Candle direction
 
-    previous_close = float(
-        prev15["Close"]
-    )
-
-    if close15 > previous_close:
+    if close15 > previous_close15:
         long_score += 1
 
-    if close15 < previous_close:
+    if close15 < previous_close15:
         short_score += 1
 
     # Momentum
 
-    m15_change = abs(
-        close15
-        -
-        previous_close
+    candle_move = abs(
+        close15 - previous_close15
     )
 
-    if (
-        m15_change
-        <=
-        atr15
-        *
-        MAX_SIGNAL_MOVE_ATR
+    if candle_move <= (
+        atr15 * MAX_SIGNAL_MOVE_ATR
     ):
 
-        if close15 > previous_close:
+        if close15 > previous_close15:
             long_score += 1
 
-        if close15 < previous_close:
+        if close15 < previous_close15:
             short_score += 1
 
     long_score = min(
@@ -947,19 +763,17 @@ def analyze_market(
         short_5_score += 1
 
     # ========================================================
-    # H1 CONTEXT
+    # H1
     # ========================================================
 
     h1_bull = (
         close1h > ema20_1h
-        and
-        ema20_1h > ema50_1h
+        and ema20_1h > ema50_1h
     )
 
     h1_bear = (
         close1h < ema20_1h
-        and
-        ema20_1h < ema50_1h
+        and ema20_1h < ema50_1h
     )
 
     # ========================================================
@@ -1001,23 +815,19 @@ def analyze_market(
     print("====================================")
 
     print(
-        f"M15 Score : "
-        f"{long_score}/6"
+        f"M15 Score : {long_score}/6"
     )
 
     print(
-        f"5M Score  : "
-        f"{long_5_score}/3"
+        f"5M Score  : {long_5_score}/3"
     )
 
     print(
         "H1        : "
-        +
-        (
+        + (
             "BULL"
             if h1_bull
-            else
-            "NOT BULL"
+            else "NOT BULL"
         )
     )
 
@@ -1027,65 +837,53 @@ def analyze_market(
     print("====================================")
 
     print(
-        f"M15 Score : "
-        f"{short_score}/6"
+        f"M15 Score : {short_score}/6"
     )
 
     print(
-        f"5M Score  : "
-        f"{short_5_score}/3"
+        f"5M Score  : {short_5_score}/3"
     )
 
     print(
         "H1        : "
-        +
-        (
+        + (
             "BEAR"
             if h1_bear
-            else
-            "NOT BEAR"
+            else "NOT BEAR"
         )
     )
 
     # ========================================================
-    # V11.2 SIGNAL QUALITY
+    # SIGNAL QUALITY
     #
-    # 5/6 alone = strong signal
+    # M15 5/6 = strong
     #
-    # 4/6 requires 5M >= 2/3
-    #
-    # This removes:
-    # M15 4/6 + 5M 1/3
+    # M15 4/6 requires 5M >= 2/3
     # ========================================================
 
     long_quality = (
         long_score >= STRONG_M15_SCORE
-        or
-        (
+        or (
             long_score >= MIN_M15_SCORE
-            and
-            long_5_score >= MIN_ENTRY_5M_SCORE
+            and long_5_score >= MIN_5M_SCORE
         )
     )
 
     short_quality = (
         short_score >= STRONG_M15_SCORE
-        or
-        (
+        or (
             short_score >= MIN_M15_SCORE
-            and
-            short_5_score >= MIN_ENTRY_5M_SCORE
+            and short_5_score >= MIN_5M_SCORE
         )
     )
 
-    # RSI protection
+    # RSI filter
 
     if not (
         LONG_RSI_MIN
         <= rsi15
         <= LONG_RSI_MAX
     ):
-
         long_quality = False
 
     if not (
@@ -1093,38 +891,27 @@ def analyze_market(
         <= rsi15
         <= SHORT_RSI_MAX
     ):
-
         short_quality = False
 
-    # Strong opposite 5M blocks signal
+    # Strong opposite 5M
 
     if (
         long_quality
-        and
-        short_5_score >= 3
-        and
-        long_5_score == 0
+        and short_5_score >= 3
+        and long_5_score == 0
     ):
-
         long_quality = False
 
     if (
         short_quality
-        and
-        long_5_score >= 3
-        and
-        short_5_score == 0
+        and long_5_score >= 3
+        and short_5_score == 0
     ):
-
         short_quality = False
 
     direction = None
 
-    if (
-        long_quality
-        and
-        short_quality
-    ):
+    if long_quality and short_quality:
 
         if long_score > short_score:
             direction = "LONG"
@@ -1148,12 +935,9 @@ def analyze_market(
 
         distance_atr = (
             abs(
-                close15
-                -
-                ema20_15
+                close15 - ema20_15
             )
-            /
-            atr15
+            / atr15
             if atr15 > 0
             else 999
         )
@@ -1168,48 +952,30 @@ def analyze_market(
             f"{distance_atr:.2f} ATR"
         )
 
-        if (
-            distance_atr
-            >
-            MAX_ENTRY_DISTANCE_ATR
-        ):
+        if distance_atr > MAX_ENTRY_DISTANCE_ATR:
 
-            print(
-                "Distance : FAIL"
-            )
-
+            print("Distance : FAIL")
             direction = None
 
         else:
 
-            print(
-                "Distance : PASS"
-            )
+            print("Distance : PASS")
 
     return {
-
         "direction": direction,
-
         "signal_price": close15,
-
         "atr": atr15,
-
         "long_score": long_score,
-
         "short_score": short_score,
-
         "long_5_score": long_5_score,
-
         "short_5_score": short_5_score,
-
         "h1_bull": h1_bull,
-
         "h1_bear": h1_bear
     }
 
 
 # ============================================================
-# CREATE PENDING
+# CREATE PULLBACK SIGNAL
 # ============================================================
 
 def create_pending(
@@ -1217,103 +983,65 @@ def create_pending(
     analysis
 ):
 
-    direction = (
-        analysis["direction"]
-    )
-
-    signal_price = (
-        analysis["signal_price"]
-    )
-
-    atr_value = (
-        analysis["atr"]
-    )
+    direction = analysis["direction"]
+    signal_price = analysis["signal_price"]
+    atr_value = analysis["atr"]
 
     pullback_size = (
-        atr_value
-        *
-        PULLBACK_ATR
+        atr_value * PULLBACK_ATR
     )
 
     # --------------------------------------------------------
     # LONG
     #
-    # Price must pull back BELOW signal price.
-    # Current price is NOT automatically accepted.
+    # Price must actually move DOWN from signal.
     # --------------------------------------------------------
 
     if direction == "LONG":
 
         pullback_high = (
             signal_price
-            -
-            atr_value * 0.10
+            - atr_value * 0.10
         )
 
         pullback_low = (
             signal_price
-            -
-            pullback_size
+            - pullback_size
         )
 
     # --------------------------------------------------------
     # SHORT
+    #
+    # Price must actually move UP from signal.
     # --------------------------------------------------------
 
     else:
 
         pullback_low = (
             signal_price
-            +
-            atr_value * 0.10
+            + atr_value * 0.10
         )
 
         pullback_high = (
             signal_price
-            +
-            pullback_size
+            + pullback_size
         )
 
     state["status"] = "PENDING"
 
     state["direction"] = direction
 
-    state["signal_price"] = (
-        signal_price
-    )
+    state["signal_price"] = signal_price
 
-    state["pullback_low"] = (
-        pullback_low
-    )
-
-    state["pullback_high"] = (
-        pullback_high
-    )
+    state["pullback_low"] = pullback_low
+    state["pullback_high"] = pullback_high
 
     state["pullback_touched"] = False
 
-    state["pending_time"] = (
-        now_iso()
-    )
-
-    state["signal_time"] = (
-        now_iso()
-    )
+    state["signal_time"] = now_iso()
+    state["pending_time"] = now_iso()
 
     state["pending_alert_sent"] = False
-
-    state["entry"] = None
-    state["sl"] = None
-
-    state["tp1"] = None
-    state["tp2"] = None
-    state["tp3"] = None
-
-    state["tp1_hit"] = False
-    state["tp2_hit"] = False
-    state["tp3_hit"] = False
-
-    state["entry_alert_sent"] = False
 
     save_state(state)
 
@@ -1350,21 +1078,15 @@ def create_pending(
         f"${pullback_low:,.2f}"
         f" ~ "
         f"${pullback_high:,.2f}\n\n"
-        "⚠️ 아직 진입하지 않습니다.\n"
+        "⚠️ 아직 실제 진입이 아닙니다.\n"
         "먼저 풀백이 발생해야 합니다.\n"
-        "풀백 후 방향 재확인 시 실제 진입합니다.\n\n"
+        "풀백 후 방향을 재확인합니다.\n\n"
         "⚙️ 전략 : M15 주도 + 5M 확인"
     )
 
-    sent = send_telegram(
-        message
-    )
+    if send_telegram(message):
 
-    if sent:
-
-        state[
-            "pending_alert_sent"
-        ] = True
+        state["pending_alert_sent"] = True
 
         save_state(state)
 
@@ -1380,28 +1102,19 @@ def create_pending(
 
 
 # ============================================================
-# ENTRY CONFIRMATION
+# CONFIRM ENTRY
 # ============================================================
 
 def confirm_entry(
     state,
     current_price,
-    atr_value,
-    m5_score
+    atr_value
 ):
 
-    direction = (
-        state["direction"]
-    )
-
-    # --------------------------------------------------------
-    # Risk
-    # --------------------------------------------------------
+    direction = state["direction"]
 
     risk = (
-        atr_value
-        *
-        RISK_ATR_MULT
+        atr_value * RISK_ATR_MULT
     )
 
     risk = max(
@@ -1418,60 +1131,39 @@ def confirm_entry(
 
     if direction == "LONG":
 
-        sl = (
-            entry
-            -
-            risk
-        )
+        sl = entry - risk
 
-        tp1 = (
-            entry
-            +
+        tp1 = entry + (
             risk * TP1_R
         )
 
-        tp2 = (
-            entry
-            +
+        tp2 = entry + (
             risk * TP2_R
         )
 
-        tp3 = (
-            entry
-            +
+        tp3 = entry + (
             risk * TP3_R
         )
 
     else:
 
-        sl = (
-            entry
-            +
-            risk
-        )
+        sl = entry + risk
 
-        tp1 = (
-            entry
-            -
+        tp1 = entry - (
             risk * TP1_R
         )
 
-        tp2 = (
-            entry
-            -
+        tp2 = entry - (
             risk * TP2_R
         )
 
-        tp3 = (
-            entry
-            -
+        tp3 = entry - (
             risk * TP3_R
         )
 
     state["status"] = "ACTIVE"
 
     state["entry"] = entry
-
     state["sl"] = sl
 
     state["tp1"] = tp1
@@ -1488,7 +1180,7 @@ def confirm_entry(
 
     print("")
     print("====================================")
-    print(" ENTRY CONFIRMED")
+    print(" ACTUAL ENTRY CONFIRMED")
     print("====================================")
 
     print(
@@ -1496,28 +1188,23 @@ def confirm_entry(
     )
 
     print(
-        f"Entry     : "
-        f"${entry:,.2f}"
+        f"Entry     : ${entry:,.2f}"
     )
 
     print(
-        f"SL        : "
-        f"${sl:,.2f}"
+        f"SL        : ${sl:,.2f}"
     )
 
     print(
-        f"TP1       : "
-        f"${tp1:,.2f}"
+        f"TP1       : ${tp1:,.2f}"
     )
 
     print(
-        f"TP2       : "
-        f"${tp2:,.2f}"
+        f"TP2       : ${tp2:,.2f}"
     )
 
     print(
-        f"TP3       : "
-        f"${tp3:,.2f}"
+        f"TP3       : ${tp3:,.2f}"
     )
 
     message = (
@@ -1526,8 +1213,7 @@ def confirm_entry(
         (
             "🟢 롱 진입 확정"
             if direction == "LONG"
-            else
-            "🔴 숏 진입 확정"
+            else "🔴 숏 진입 확정"
         )
         +
         "\n"
@@ -1545,18 +1231,12 @@ def confirm_entry(
         f"🎯 익절 3 : "
         f"${tp3:,.2f}\n\n"
         "⚙️ 전략 : M15 주도 + 5M 확인\n"
-        "✅ 풀백 발생 후 방향 재확인"
+        "✅ 풀백 발생 + 방향 재확인"
     )
 
-    sent = send_telegram(
-        message
-    )
+    if send_telegram(message):
 
-    if sent:
-
-        state[
-            "entry_alert_sent"
-        ] = True
+        state["entry_alert_sent"] = True
 
         save_state(state)
 
@@ -1568,8 +1248,7 @@ def confirm_entry(
             "sl": sl,
             "tp1": tp1,
             "tp2": tp2,
-            "tp3": tp3,
-            "m5_score": m5_score
+            "tp3": tp3
         }
     )
 
@@ -1583,98 +1262,31 @@ def monitor_pending(
     data
 ):
 
-    direction = (
-        state["direction"]
-    )
+    direction = state["direction"]
 
     m1 = data["1m"]
-    m5 = data["5m"]
-    m15 = data["15m"]
 
+    m5 = completed_df(
+        data["5m"]
+    )
+
+    m15 = completed_df(
+        data["15m"]
+    )
+
+    # Current price
     current_price = float(
         m1["Close"].iloc[-1]
     )
 
+    # ATR
     atr_value = float(
         atr(m15).iloc[-1]
     )
 
-    # ========================================================
-    # TIMEOUT
-    # ========================================================
-
-    pending_time = (
-        state.get(
-            "pending_time"
-        )
+    signal_price = float(
+        state["signal_price"]
     )
-
-    if pending_time:
-
-        try:
-
-            created = (
-                datetime.fromisoformat(
-                    pending_time
-                )
-            )
-
-            age_minutes = (
-                now_kst()
-                -
-                created
-            ).total_seconds() / 60
-
-            if (
-                age_minutes
-                >
-                PENDING_TIMEOUT_MINUTES
-            ):
-
-                print("")
-                print(
-                    "===================================="
-                )
-
-                print(
-                    " PENDING TIMEOUT"
-                )
-
-                print(
-                    "===================================="
-                )
-
-                print(
-                    "풀백 대기 시간이 "
-                    "만료되었습니다."
-                )
-
-                send_telegram(
-                    "🥇 금 선물 스마트 시그널\n\n"
-                    "⚪ 풀백 진입 대기 취소\n"
-                    "━━━━━━━━━━━━━━━━━━\n\n"
-                    "정해진 시간 안에 "
-                    "유효한 풀백이 발생하지 않아\n"
-                    "기존 신호를 취소했습니다."
-                )
-
-                save_log(
-                    "PENDING_TIMEOUT"
-                )
-
-                state.clear()
-
-                state.update(
-                    default_state()
-                )
-
-                save_state(state)
-
-                return
-
-        except Exception:
-
-            pass
 
     pullback_low = float(
         state["pullback_low"]
@@ -1684,12 +1296,66 @@ def monitor_pending(
         state["pullback_high"]
     )
 
-    signal_price = float(
-        state["signal_price"]
+    # ========================================================
+    # TIMEOUT
+    # ========================================================
+
+    pending_time = state.get(
+        "pending_time"
     )
 
+    if pending_time:
+
+        try:
+
+            created = datetime.fromisoformat(
+                pending_time
+            )
+
+            age_minutes = (
+                now_kst() - created
+            ).total_seconds() / 60
+
+            if (
+                age_minutes
+                > PENDING_TIMEOUT_MINUTES
+            ):
+
+                print("")
+                print("====================================")
+                print(" PENDING TIMEOUT")
+                print("====================================")
+
+                print(
+                    "풀백 대기 시간이 만료되었습니다."
+                )
+
+                send_telegram(
+                    "🥇 금 선물 스마트 시그널\n\n"
+                    "⚪ 풀백 진입 대기 취소\n"
+                    "━━━━━━━━━━━━━━━━━━\n\n"
+                    "정해진 시간 안에 유효한 "
+                    "풀백이 발생하지 않았습니다."
+                )
+
+                save_log(
+                    "PENDING_TIMEOUT"
+                )
+
+                state.clear()
+                state.update(
+                    default_state()
+                )
+
+                save_state(state)
+
+                return
+
+        except Exception:
+            pass
+
     # ========================================================
-    # 5M CURRENT SCORE
+    # 5M INDICATORS
     # ========================================================
 
     m5["EMA20"] = ema(
@@ -1750,17 +1416,9 @@ def monitor_pending(
     # ========================================================
 
     print("")
-    print(
-        "===================================="
-    )
-
-    print(
-        " PULLBACK PENDING"
-    )
-
-    print(
-        "===================================="
-    )
+    print("====================================")
+    print(" PULLBACK PENDING")
+    print("====================================")
 
     print(
         f"Direction    : {direction}"
@@ -1797,17 +1455,21 @@ def monitor_pending(
     # DISTANCE
     # ========================================================
 
-    distance_atr = (
-        abs(
-            current_price
-            -
-            signal_price
+    if atr_value > 0:
+
+        distance_atr = (
+            abs(
+                current_price
+                -
+                signal_price
+            )
+            /
+            atr_value
         )
-        /
-        atr_value
-        if atr_value > 0
-        else 0
-    )
+
+    else:
+
+        distance_atr = 0
 
     if (
         distance_atr
@@ -1821,7 +1483,7 @@ def monitor_pending(
         )
 
         print(
-            "가격이 너무 멀어졌습니다."
+            "가격이 신호에서 너무 멀어졌습니다."
         )
 
         send_telegram(
@@ -1829,7 +1491,7 @@ def monitor_pending(
             "⚪ 풀백 진입 대기 취소\n"
             "━━━━━━━━━━━━━━━━━━\n\n"
             "가격이 신호에서 너무 멀어져\n"
-            "기존 진입 대기를 취소했습니다."
+            "기존 대기 신호를 취소했습니다."
         )
 
         save_log(
@@ -1837,7 +1499,6 @@ def monitor_pending(
         )
 
         state.clear()
-
         state.update(
             default_state()
         )
@@ -1848,64 +1509,48 @@ def monitor_pending(
 
     # ========================================================
     # STEP 1
-    # PULLBACK TOUCH
+    # WAIT FOR REAL PULLBACK
     # ========================================================
 
-    if not state[
-        "pullback_touched"
-    ]:
+    if not state["pullback_touched"]:
 
         if direction == "LONG":
 
             touched = (
                 current_price
-                <=
-                pullback_high
+                <= pullback_high
                 and
                 current_price
-                >=
-                pullback_low
+                >= pullback_low
             )
 
         else:
 
             touched = (
                 current_price
-                >=
-                pullback_low
+                >= pullback_low
                 and
                 current_price
-                <=
-                pullback_high
+                <= pullback_high
             )
 
         if touched:
 
-            state[
-                "pullback_touched"
-            ] = True
+            state["pullback_touched"] = True
 
             save_state(state)
 
             print("")
+            print("====================================")
+            print(" PULLBACK TOUCHED")
+            print("====================================")
+
             print(
-                "===================================="
+                "실제 풀백이 발생했습니다."
             )
 
             print(
-                " PULLBACK TOUCHED"
-            )
-
-            print(
-                "===================================="
-            )
-
-            print(
-                "풀백 구간에 진입했습니다."
-            )
-
-            print(
-                "방향 재확인을 기다립니다."
+                "5M 방향 재확인을 기다립니다."
             )
 
             send_telegram(
@@ -1916,79 +1561,62 @@ def monitor_pending(
                 f"{'롱' if direction == 'LONG' else '숏'}\n"
                 f"💰 현재가 : "
                 f"${current_price:,.2f}\n\n"
-                "이제 방향 재확인을 기다립니다."
+                "풀백이 확인되었습니다.\n"
+                "이제 5M 방향 재확인을 기다립니다."
             )
 
             return
 
         print("")
         print(
-            "Waiting for pullback..."
+            "Waiting for real pullback..."
         )
 
         return
 
     # ========================================================
     # STEP 2
-    # AFTER PULLBACK
-    # DIRECTION CONFIRM
+    # ENTRY CONFIRMATION
     # ========================================================
 
     print("")
-    print(
-        "===================================="
-    )
-
-    print(
-        " WAITING FOR ENTRY CONFIRM"
-    )
-
-    print(
-        "===================================="
-    )
+    print("====================================")
+    print(" WAITING FOR ENTRY CONFIRM")
+    print("====================================")
 
     if direction == "LONG":
 
-        # Price must recover above 5M EMA20
         confirm = (
-            current_price
-            >
-            ema20_5
+            current_price > ema20_5
             and
-            long_5_score
-            >=
-            MIN_ENTRY_5M_SCORE
+            long_5_score >= MIN_5M_SCORE
         )
 
         print(
-            f"5M EMA20   : "
+            f"5M EMA20 : "
             f"${ema20_5:,.2f}"
         )
 
         print(
-            f"5M Long    : "
+            f"5M Long  : "
             f"{long_5_score}/3"
         )
 
     else:
 
         confirm = (
-            current_price
-            <
-            ema20_5
+            current_price < ema20_5
             and
-            short_5_score
-            >=
-            MIN_ENTRY_5M_SCORE
+            short_5_score >= MIN_5M_SCORE
         )
 
         print(
-            f"5M EMA20   : "
+            f"5M EMA20 : "
             f"${ema20_5:,.2f}"
         )
 
         print(
-            f"5M Short   : "
+            f"5M Short : "
             f"{short_5_score}/3"
         )
 
@@ -2002,13 +1630,7 @@ def monitor_pending(
         confirm_entry(
             state,
             current_price,
-            atr_value,
-            (
-                long_5_score
-                if direction == "LONG"
-                else
-                short_5_score
-            )
+            atr_value
         )
 
     else:
@@ -2028,15 +1650,11 @@ def monitor_active(
     data
 ):
 
-    m1 = data["1m"]
-
     current_price = float(
-        m1["Close"].iloc[-1]
+        data["1m"]["Close"].iloc[-1]
     )
 
-    direction = (
-        state["direction"]
-    )
+    direction = state["direction"]
 
     entry = float(
         state["entry"]
@@ -2059,50 +1677,36 @@ def monitor_active(
     )
 
     print("")
-    print(
-        "===================================="
-    )
-
-    print(
-        " ACTIVE POSITION"
-    )
-
-    print(
-        "===================================="
-    )
+    print("====================================")
+    print(" ACTIVE POSITION")
+    print("====================================")
 
     print(
         f"Direction : {direction}"
     )
 
     print(
-        f"Entry     : "
-        f"${entry:,.2f}"
+        f"Entry     : ${entry:,.2f}"
     )
 
     print(
-        f"SL        : "
-        f"${sl:,.2f}"
+        f"SL        : ${sl:,.2f}"
     )
 
     print(
-        f"TP1       : "
-        f"${tp1:,.2f}"
+        f"TP1       : ${tp1:,.2f}"
     )
 
     print(
-        f"TP2       : "
-        f"${tp2:,.2f}"
+        f"TP2       : ${tp2:,.2f}"
     )
 
     print(
-        f"TP3       : "
-        f"${tp3:,.2f}"
+        f"TP3       : ${tp3:,.2f}"
     )
 
     print(
-        f"1M Close  : "
-        f"${current_price:,.2f}"
+        f"1M Close  : ${current_price:,.2f}"
     )
 
     # ========================================================
@@ -2112,21 +1716,16 @@ def monitor_active(
     if direction == "LONG":
 
         # ----------------------------------------------------
-        # STOP
+        # STOP LOSS
         # ----------------------------------------------------
 
         if current_price <= sl:
 
             pnl = (
-                (
-                    current_price
-                    -
-                    entry
-                )
-                /
-                entry
+                (current_price - entry)
+                / entry
+                * 100
             )
-            * 100
 
             send_telegram(
                 "🥇 금 선물 스마트 시그널\n\n"
@@ -2147,12 +1746,12 @@ def monitor_active(
                 {
                     "direction": direction,
                     "entry": entry,
-                    "exit": current_price
+                    "exit": current_price,
+                    "pnl_percent": pnl
                 }
             )
 
             state.clear()
-
             state.update(
                 default_state()
             )
@@ -2167,8 +1766,7 @@ def monitor_active(
 
         if (
             not state["tp1_hit"]
-            and
-            current_price >= tp1
+            and current_price >= tp1
         ):
 
             send_telegram(
@@ -2181,9 +1779,7 @@ def monitor_active(
                 f"${current_price:,.2f}"
             )
 
-            state[
-                "tp1_hit"
-            ] = True
+            state["tp1_hit"] = True
 
             save_state(state)
 
@@ -2193,8 +1789,7 @@ def monitor_active(
 
         if (
             not state["tp2_hit"]
-            and
-            current_price >= tp2
+            and current_price >= tp2
         ):
 
             send_telegram(
@@ -2207,9 +1802,7 @@ def monitor_active(
                 f"${current_price:,.2f}"
             )
 
-            state[
-                "tp2_hit"
-            ] = True
+            state["tp2_hit"] = True
 
             save_state(state)
 
@@ -2219,8 +1812,7 @@ def monitor_active(
 
         if (
             not state["tp3_hit"]
-            and
-            current_price >= tp3
+            and current_price >= tp3
         ):
 
             send_telegram(
@@ -2245,7 +1837,6 @@ def monitor_active(
             )
 
             state.clear()
-
             state.update(
                 default_state()
             )
@@ -2261,20 +1852,16 @@ def monitor_active(
     else:
 
         # ----------------------------------------------------
-        # STOP
+        # STOP LOSS
         # ----------------------------------------------------
 
         if current_price >= sl:
 
             pnl = (
-                (
-                    entry
-                    -
-                    current_price
-                )
-                /
-                entry
-            ) * 100
+                (entry - current_price)
+                / entry
+                * 100
+            )
 
             send_telegram(
                 "🥇 금 선물 스마트 시그널\n\n"
@@ -2295,12 +1882,12 @@ def monitor_active(
                 {
                     "direction": direction,
                     "entry": entry,
-                    "exit": current_price
+                    "exit": current_price,
+                    "pnl_percent": pnl
                 }
             )
 
             state.clear()
-
             state.update(
                 default_state()
             )
@@ -2315,8 +1902,7 @@ def monitor_active(
 
         if (
             not state["tp1_hit"]
-            and
-            current_price <= tp1
+            and current_price <= tp1
         ):
 
             send_telegram(
@@ -2329,9 +1915,7 @@ def monitor_active(
                 f"${current_price:,.2f}"
             )
 
-            state[
-                "tp1_hit"
-            ] = True
+            state["tp1_hit"] = True
 
             save_state(state)
 
@@ -2341,8 +1925,7 @@ def monitor_active(
 
         if (
             not state["tp2_hit"]
-            and
-            current_price <= tp2
+            and current_price <= tp2
         ):
 
             send_telegram(
@@ -2355,9 +1938,7 @@ def monitor_active(
                 f"${current_price:,.2f}"
             )
 
-            state[
-                "tp2_hit"
-            ] = True
+            state["tp2_hit"] = True
 
             save_state(state)
 
@@ -2367,8 +1948,7 @@ def monitor_active(
 
         if (
             not state["tp3_hit"]
-            and
-            current_price <= tp3
+            and current_price <= tp3
         ):
 
             send_telegram(
@@ -2393,7 +1973,6 @@ def monitor_active(
             )
 
             state.clear()
-
             state.update(
                 default_state()
             )
@@ -2463,31 +2042,21 @@ def main():
         return
 
     # ========================================================
-    # FRESH SIGNAL
+    # NEW SIGNAL
     # ========================================================
 
     analysis = analyze_market(
         data
     )
 
-    direction = (
-        analysis["direction"]
-    )
+    direction = analysis["direction"]
 
     if direction is None:
 
         print("")
-        print(
-            "===================================="
-        )
-
-        print(
-            " NO VALID SIGNAL"
-        )
-
-        print(
-            "===================================="
-        )
+        print("====================================")
+        print(" NO VALID SIGNAL")
+        print("====================================")
 
         save_log(
             "NO_SIGNAL",
@@ -2508,18 +2077,14 @@ def main():
 
         return
 
+    # ========================================================
+    # FRESH SIGNAL
+    # ========================================================
+
     print("")
-    print(
-        "===================================="
-    )
-
-    print(
-        " FRESH SIGNAL FOUND"
-    )
-
-    print(
-        "===================================="
-    )
+    print("====================================")
+    print(" FRESH SIGNAL FOUND")
+    print("====================================")
 
     print(
         f"Direction : {direction}"
@@ -2529,13 +2094,6 @@ def main():
         state,
         analysis
     )
-
-    # IMPORTANT:
-    #
-    # DO NOT immediately activate.
-    #
-    # V11.2 must wait for a real pullback.
-    #
 
     print("")
     print(
@@ -2556,25 +2114,18 @@ if __name__ == "__main__":
     except Exception as e:
 
         print("")
-        print(
-            "===================================="
-        )
+        print("====================================")
+        print(" BOT ERROR")
+        print("====================================")
 
         print(
-            " BOT ERROR"
-        )
-
-        print(
-            "===================================="
-        )
-
-        print(
-            str(e)
+            f"{type(e).__name__}: {e}"
         )
 
         save_log(
             "BOT_ERROR",
             {
-                "error": str(e)
+                "error": str(e),
+                "type": type(e).__name__
             }
-)
+        )
