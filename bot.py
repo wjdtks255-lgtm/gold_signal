@@ -10,12 +10,12 @@ from datetime import datetime, timedelta, timezone
 
 # =========================================================
 # GOLD FUTURES SMART SIGNAL BOT
-# BALANCED V5
+# BALANCED V5 FINAL
 # =========================================================
 
 print("=================================")
 print(" GOLD FUTURES SMART SIGNAL BOT")
-print(" BALANCED V5")
+print(" BALANCED V5 FINAL")
 print("=================================")
 
 
@@ -35,7 +35,7 @@ KST = timezone(timedelta(hours=9))
 
 
 # =========================================================
-# TARGET
+# TARGET SETTINGS
 # =========================================================
 
 TP1_R = 1.20
@@ -44,7 +44,7 @@ TP3_R = 3.00
 
 
 # =========================================================
-# STOP LOSS
+# STOP LOSS SETTINGS
 # =========================================================
 
 MIN_SL_ATR = 0.55
@@ -68,22 +68,16 @@ TREND_SCORE = 4
 
 
 # =========================================================
-# EARLY SIGNAL
-# =========================================================
-#
-# Early signal intentionally does NOT require
-# EMA20 slope confirmation.
-#
-# This is designed to catch:
-#
-# Price > EMA20 > EMA50
-#
-# before the full 1H trend becomes obvious.
+# EARLY TREND / REVERSAL
 # =========================================================
 
 EARLY_SCORE = 4
-
 EARLY_MIN_ADX = 13.0
+
+
+# =========================================================
+# RSI
+# =========================================================
 
 LONG_RSI_MIN = 52.0
 LONG_RSI_MAX = 68.0
@@ -106,7 +100,9 @@ COOLDOWN_MINUTES = 60
 def send_telegram(message):
 
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
+
         print("Telegram credentials missing.")
+
         return False
 
     url = (
@@ -158,6 +154,7 @@ def normalize_timestamp(ts):
     ts = pd.Timestamp(ts)
 
     if ts.tzinfo is None:
+
         ts = ts.tz_localize("UTC")
 
     return ts
@@ -266,7 +263,7 @@ def log_event(event):
 
 
 # =========================================================
-# CLEAN DATA
+# DATA CLEAN
 # =========================================================
 
 def clean_dataframe(df):
@@ -327,7 +324,7 @@ def clean_dataframe(df):
 
 
 # =========================================================
-# DOWNLOAD
+# DOWNLOAD MARKET DATA
 # =========================================================
 
 def download_data():
@@ -394,8 +391,7 @@ def download_data():
             data[name] = df
 
             print(
-                f"{name}: "
-                f"{len(df)} candles"
+                f"{name}: {len(df)} candles"
             )
 
         except Exception as e:
@@ -417,7 +413,7 @@ def add_indicators(df):
     df = df.copy()
 
     # -----------------------------------------------------
-    # EMA
+    # EMA 20
     # -----------------------------------------------------
 
     df["EMA20"] = (
@@ -428,6 +424,10 @@ def add_indicators(df):
         )
         .mean()
     )
+
+    # -----------------------------------------------------
+    # EMA 50
+    # -----------------------------------------------------
 
     df["EMA50"] = (
         df["Close"]
@@ -614,7 +614,7 @@ def add_indicators(df):
     )
 
     # -----------------------------------------------------
-    # Candle
+    # CANDLE
     # -----------------------------------------------------
 
     df["Body"] = (
@@ -656,18 +656,6 @@ def add_indicators(df):
 # =========================================================
 # 5M CONFIRMATION
 # =========================================================
-#
-# 3 conditions:
-#
-# LONG
-# 1. Close > EMA20
-# 2. Close > previous Close
-# 3. RSI >= 50
-#
-# Need 2 / 3
-#
-# SHORT is the opposite.
-# =========================================================
 
 def check_5m_confirmation(m5):
 
@@ -687,23 +675,31 @@ def check_5m_confirmation(m5):
     short_score = 0
 
     # LONG
+
     if c["Close"] > c["EMA20"]:
+
         long_score += 1
 
     if c["Close"] > p["Close"]:
+
         long_score += 1
 
     if c["RSI"] >= 50:
+
         long_score += 1
 
     # SHORT
+
     if c["Close"] < c["EMA20"]:
+
         short_score += 1
 
     if c["Close"] < p["Close"]:
+
         short_score += 1
 
     if c["RSI"] <= 50:
+
         short_score += 1
 
     return (
@@ -745,7 +741,7 @@ def find_signal(data):
         return None
 
     # =====================================================
-    # CLOSED CANDLES
+    # CLOSED CANDLES ONLY
     # =====================================================
 
     h = h1.iloc[-2]
@@ -755,7 +751,7 @@ def find_signal(data):
     mp = m15.iloc[-3]
 
     # =====================================================
-    # CURRENT M15 VALUES
+    # M15 MARKET VALUES
     # =====================================================
 
     price = float(
@@ -808,16 +804,13 @@ def find_signal(data):
     #
     # IMPORTANT:
     #
-    # No EMA20 slope requirement.
+    # No EMA slope requirement.
     #
     # LONG:
-    # Price > EMA20 > EMA50
+    # H1 Close > EMA20 > EMA50
     #
     # SHORT:
-    # Price < EMA20 < EMA50
-    #
-    # This catches the move before the full trend
-    # confirmation.
+    # H1 Close < EMA20 < EMA50
     # =====================================================
 
     h1_early_bull = (
@@ -831,7 +824,7 @@ def find_signal(data):
     )
 
     # =====================================================
-    # 5M
+    # 5M CONFIRMATION
     # =====================================================
 
     (
@@ -867,28 +860,34 @@ def find_signal(data):
     normal_long_score = 0
 
     if m["Close"] > m["Open"]:
+
         normal_long_score += 1
 
     if m["Close"] > mp["High"]:
+
         normal_long_score += 1
 
     if (
         45
         <= m["RSI"]
-        <= MAX_LONG_RSI
+        <= LONG_RSI_MAX
     ):
+
         normal_long_score += 1
 
     if m["ADX"] >= MIN_ADX:
+
         normal_long_score += 1
 
     if (
         m["Close"] > m["EMA20"]
         and m["EMA20"] >= m["EMA50"]
     ):
+
         normal_long_score += 1
 
     if long_5m:
+
         normal_long_score += 1
 
     # =====================================================
@@ -898,9 +897,11 @@ def find_signal(data):
     normal_short_score = 0
 
     if m["Close"] < m["Open"]:
+
         normal_short_score += 1
 
     if m["Close"] < mp["Low"]:
+
         normal_short_score += 1
 
     if (
@@ -908,43 +909,50 @@ def find_signal(data):
         <= m["RSI"]
         <= 52
     ):
+
         normal_short_score += 1
 
     if m["ADX"] >= MIN_ADX:
+
         normal_short_score += 1
 
     if (
         m["Close"] < m["EMA20"]
         and m["EMA20"] <= m["EMA50"]
     ):
+
         normal_short_score += 1
 
     if short_5m:
+
         normal_short_score += 1
 
     # =====================================================
     # EARLY LONG SCORE
     # =====================================================
     #
-    # 1. H1 price > EMA20
-    # 2. H1 EMA20 > EMA50
-    # 3. M15 bullish candle
-    # 4. M15 RSI 52~68
-    # 5. M15 price > EMA20
-    # 6. 5M confirmation
+    # 1 H1 close > EMA20
+    # 2 H1 EMA20 > EMA50
+    # 3 M15 bullish candle
+    # 4 M15 RSI 52~68
+    # 5 M15 close > EMA20
+    # 6 5M confirmation
     #
-    # Need 4 / 6
+    # 4 / 6 required
     # =====================================================
 
     early_long_score = 0
 
     if h["Close"] > h["EMA20"]:
+
         early_long_score += 1
 
     if h["EMA20"] > h["EMA50"]:
+
         early_long_score += 1
 
     if m["Close"] > m["Open"]:
+
         early_long_score += 1
 
     if (
@@ -952,12 +960,15 @@ def find_signal(data):
         <= m["RSI"]
         <= LONG_RSI_MAX
     ):
+
         early_long_score += 1
 
     if m["Close"] > m["EMA20"]:
+
         early_long_score += 1
 
     if long_5m:
+
         early_long_score += 1
 
     # =====================================================
@@ -967,12 +978,15 @@ def find_signal(data):
     early_short_score = 0
 
     if h["Close"] < h["EMA20"]:
+
         early_short_score += 1
 
     if h["EMA20"] < h["EMA50"]:
+
         early_short_score += 1
 
     if m["Close"] < m["Open"]:
+
         early_short_score += 1
 
     if (
@@ -980,12 +994,15 @@ def find_signal(data):
         <= m["RSI"]
         <= SHORT_RSI_MAX
     ):
+
         early_short_score += 1
 
     if m["Close"] < m["EMA20"]:
+
         early_short_score += 1
 
     if short_5m:
+
         early_short_score += 1
 
     # =====================================================
@@ -1145,16 +1162,14 @@ def find_signal(data):
 
     normal_long = (
         h1_bull
-        and normal_long_score
-        >= TREND_SCORE
+        and normal_long_score >= TREND_SCORE
         and long_5m
         and adx >= MIN_ADX
     )
 
     normal_short = (
         h1_bear
-        and normal_short_score
-        >= TREND_SCORE
+        and normal_short_score >= TREND_SCORE
         and short_5m
         and adx >= MIN_ADX
     )
@@ -1162,42 +1177,23 @@ def find_signal(data):
     # =====================================================
     # EARLY SIGNAL
     # =====================================================
-    #
-    # This is the main V5 improvement.
-    #
-    # We do NOT require:
-    #
-    # EMA20 rising
-    #
-    # We only require:
-    #
-    # H1 structure
-    # +
-    # M15 score
-    # +
-    # ADX
-    # +
-    # 5M confirmation
-    # =====================================================
 
     early_long = (
         h1_early_bull
-        and early_long_score
-        >= EARLY_SCORE
+        and early_long_score >= EARLY_SCORE
         and long_5m
         and adx >= EARLY_MIN_ADX
     )
 
     early_short = (
         h1_early_bear
-        and early_short_score
-        >= EARLY_SCORE
+        and early_short_score >= EARLY_SCORE
         and short_5m
         and adx >= EARLY_MIN_ADX
     )
 
     # =====================================================
-    # SELECT
+    # SELECT SIGNAL
     # =====================================================
 
     direction = None
@@ -1233,7 +1229,7 @@ def find_signal(data):
         return None
 
     # =====================================================
-    # ENTRY DISTANCE
+    # ENTRY DISTANCE FILTER
     # =====================================================
 
     if not entry_distance_ok:
@@ -1246,7 +1242,7 @@ def find_signal(data):
         return None
 
     # =====================================================
-    # CANDLE MOVE FILTER
+    # SIGNAL CANDLE SIZE FILTER
     # =====================================================
 
     signal_move = abs(
@@ -1335,7 +1331,7 @@ def find_signal(data):
         return None
 
     # =====================================================
-    # TARGETS
+    # TARGET
     # =====================================================
 
     if direction == "LONG":
@@ -1390,7 +1386,7 @@ def find_signal(data):
     )
 
     # =====================================================
-    # SIGNAL
+    # SIGNAL OBJECT
     # =====================================================
 
     signal = {
@@ -1513,7 +1509,7 @@ def find_signal(data):
     }
 
     # =====================================================
-    # OUTPUT
+    # SIGNAL OUTPUT
     # =====================================================
 
     print()
@@ -1561,7 +1557,7 @@ def find_signal(data):
 
 
 # =========================================================
-# TELEGRAM ENTRY
+# TELEGRAM ENTRY MESSAGE
 # =========================================================
 
 def format_entry_message(signal):
@@ -1659,7 +1655,7 @@ def monitor_position(
     )
 
     # =====================================================
-    # MONITOR
+    # M1 MONITOR
     # =====================================================
 
     for timestamp, candle in m1.iterrows():
@@ -1704,10 +1700,16 @@ def monitor_position(
                 ).isoformat()
 
                 log_event({
-                    "event": "SL",
+
+                    "event":
+                        "SL",
+
                     "direction":
                         direction,
-                    "price": sl,
+
+                    "price":
+                        sl,
+
                     "time":
                         timestamp.isoformat()
                 })
@@ -1731,10 +1733,16 @@ def monitor_position(
                 ] = True
 
                 log_event({
-                    "event": "TP1",
+
+                    "event":
+                        "TP1",
+
                     "direction":
                         direction,
-                    "price": tp1,
+
+                    "price":
+                        tp1,
+
                     "time":
                         timestamp.isoformat()
                 })
@@ -1762,10 +1770,16 @@ def monitor_position(
                 ]
 
                 log_event({
-                    "event": "TP2",
+
+                    "event":
+                        "TP2",
+
                     "direction":
                         direction,
-                    "price": tp2,
+
+                    "price":
+                        tp2,
+
                     "time":
                         timestamp.isoformat()
                 })
@@ -1803,10 +1817,16 @@ def monitor_position(
                 ).isoformat()
 
                 log_event({
-                    "event": "TP3",
+
+                    "event":
+                        "TP3",
+
                     "direction":
                         direction,
-                    "price": tp3,
+
+                    "price":
+                        tp3,
+
                     "time":
                         timestamp.isoformat()
                 })
@@ -1845,10 +1865,16 @@ def monitor_position(
                 ).isoformat()
 
                 log_event({
-                    "event": "SL",
+
+                    "event":
+                        "SL",
+
                     "direction":
                         direction,
-                    "price": sl,
+
+                    "price":
+                        sl,
+
                     "time":
                         timestamp.isoformat()
                 })
@@ -1872,10 +1898,16 @@ def monitor_position(
                 ] = True
 
                 log_event({
-                    "event": "TP1",
+
+                    "event":
+                        "TP1",
+
                     "direction":
                         direction,
-                    "price": tp1,
+
+                    "price":
+                        tp1,
+
                     "time":
                         timestamp.isoformat()
                 })
@@ -1903,10 +1935,16 @@ def monitor_position(
                 ]
 
                 log_event({
-                    "event": "TP2",
+
+                    "event":
+                        "TP2",
+
                     "direction":
                         direction,
-                    "price": tp2,
+
+                    "price":
+                        tp2,
+
                     "time":
                         timestamp.isoformat()
                 })
@@ -1944,10 +1982,16 @@ def monitor_position(
                 ).isoformat()
 
                 log_event({
-                    "event": "TP3",
+
+                    "event":
+                        "TP3",
+
                     "direction":
                         direction,
-                    "price": tp3,
+
+                    "price":
+                        tp3,
+
                     "time":
                         timestamp.isoformat()
                 })
@@ -1976,7 +2020,7 @@ def main():
     state = load_state()
 
     # =====================================================
-    # ACTIVE
+    # ACTIVE POSITION
     # =====================================================
 
     if (
@@ -2091,7 +2135,7 @@ def main():
         )
 
     # =====================================================
-    # FIND SIGNAL
+    # FIND NEW SIGNAL
     # =====================================================
 
     signal = find_signal(
@@ -2126,7 +2170,7 @@ def main():
             return
 
     # =====================================================
-    # SAVE
+    # SAVE SIGNAL
     # =====================================================
 
     signal[
@@ -2195,7 +2239,7 @@ def main():
 
 
 # =========================================================
-# RUN
+# START
 # =========================================================
 
 if __name__ == "__main__":
