@@ -8,8 +8,7 @@ from datetime import datetime, timezone, timedelta
 
 
 # ============================================================
-# GOLD FUTURES SMART SIGNAL BOT
-# Scoring & Flexible Condition Version (KST & Korean Localized)
+# GOLD FUTURES SMART SIGNAL BOT (FINAL VERSION)
 # ============================================================
 
 TICKER = "GC=F"
@@ -18,7 +17,7 @@ STATE_FILE = "signal_state.json"
 LOG_FILE = "bot_log.json"
 
 # ============================================================
-# TELEGRAM
+# TELEGRAM SETTINGS
 # ============================================================
 
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
@@ -29,30 +28,21 @@ TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 # STRATEGY SETTINGS (점수제 및 유연한 기준)
 # ============================================================
 
-# Take Profit
 TP1_R = 1.20
 TP2_R = 2.00
 TP3_R = 3.00
 
-# Stop Loss
 MAX_SL_ATR = 2.50
-
-# Entry distance
 MAX_ENTRY_DISTANCE_ATR = 1.50
-
-# Signal movement filter
 MAX_SIGNAL_MOVE_ATR = 0.80
-
-# Cooldown after position closes
 COOLDOWN_MINUTES = 60
 
 
 # ============================================================
-# TELEGRAM
+# TELEGRAM FUNCTION
 # ============================================================
 
 def send_telegram(message):
-
     if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
         print("Telegram credentials are missing.")
         return False
@@ -228,7 +218,7 @@ def add_indicators(df):
 
 
 # ============================================================
-# FIND SIGNAL (점수제 적용 로직)
+# FIND SIGNAL (점수제 로직)
 # ============================================================
 
 def find_signal(h1, m15, m5):
@@ -251,70 +241,36 @@ def find_signal(h1, m15, m5):
     adx = float(c["ADX"])
     atr = float(c["ATR"])
 
-    print("")
-    print("====================================")
-    print(" CURRENT MARKET CHECK (SCORING)")
-    print("====================================")
-    print(f"Price : ${price:,.2f}")
-    print(f"EMA20 : ${ema20:,.2f}")
-    print(f"RSI   : {rsi:.2f}")
-    print(f"ADX   : {adx:.2f}")
-    print(f"ATR   : {atr:.2f}")
-
-    # --------------------------------------------------------
-    # LONG 점수 산정 (필수 2개 + 보조 중 3개 이상 만족 시 신호)
-    # --------------------------------------------------------
+    # LONG 점수
     h1_bull_base = (h["Close"] > h["EMA20"] or h["EMA20"] >= h["EMA50"])
     long_distance = abs(price - ema20) <= atr * MAX_ENTRY_DISTANCE_ATR
 
     long_score = 0
-    long_reversal = (c["Close"] > c["Open"] and c["BodyRatio"] >= 0.30 and c["ClosePosition"] >= 0.55)
-    long_breakout = (c["Close"] > p["High"])
-    long_rsi = (40 <= rsi <= 75)
-    long_adx = (adx >= 12)
-    long_ema_hold = (c["Close"] >= ema20 - atr * 0.50)
-
-    if long_reversal: long_score += 1
-    if long_breakout: long_score += 1
-    if long_rsi: long_score += 1
-    if long_adx: long_score += 1
-    if long_ema_hold: long_score += 1
+    if (c["Close"] > c["Open"] and c["BodyRatio"] >= 0.30 and c["ClosePosition"] >= 0.55): long_score += 1
+    if (c["Close"] > p["High"]): long_score += 1
+    if (40 <= rsi <= 75): long_score += 1
+    if (adx >= 12): long_score += 1
+    if (c["Close"] >= ema20 - atr * 0.50): long_score += 1
 
     long_condition = h1_bull_base and long_distance and (long_score >= 3)
 
-    # --------------------------------------------------------
-    # SHORT 점수 산정 (필수 2개 + 보조 중 3개 이상 만족 시 신호)
-    # --------------------------------------------------------
+    # SHORT 점수
     h1_bear_base = (h["Close"] < h["EMA20"] or h["EMA20"] <= h["EMA50"])
     short_distance = abs(price - ema20) <= atr * MAX_ENTRY_DISTANCE_ATR
 
     short_score = 0
-    short_reversal = (c["Close"] < c["Open"] and c["BodyRatio"] >= 0.30 and c["ClosePosition"] <= 0.45)
-    short_breakdown = (c["Close"] < p["Low"])
-    short_rsi = (25 <= rsi <= 60)
-    short_adx = (adx >= 12)
-    short_ema_hold = (c["Close"] <= ema20 + atr * 0.50)
-
-    if short_reversal: short_score += 1
-    if short_breakdown: short_score += 1
-    if short_rsi: short_score += 1
-    if short_adx: short_score += 1
-    if short_ema_hold: short_score += 1
+    if (c["Close"] < c["Open"] and c["BodyRatio"] >= 0.30 and c["ClosePosition"] <= 0.45): short_score += 1
+    if (c["Close"] < p["Low"]): short_score += 1
+    if (25 <= rsi <= 60): short_score += 1
+    if (adx >= 12): short_score += 1
+    if (c["Close"] <= ema20 + atr * 0.50): short_score += 1
 
     short_condition = h1_bear_base and short_distance and (short_score >= 3)
 
-    print(f"LONG Score  : {long_score} / 5 (Pass: {long_condition})")
-    print(f"SHORT Score : {short_score} / 5 (Pass: {short_condition})")
-
     if not long_condition and not short_condition:
-        print("\n====================================")
-        print(" NO VALID SIGNAL (Score < 3)")
-        print("====================================")
+        print("No valid signal found.")
         return None
 
-    # ========================================================
-    # ENTRY & RISK
-    # ========================================================
     if long_condition and (long_score >= short_score):
         direction = "LONG"
         entry = price
@@ -330,12 +286,9 @@ def find_signal(h1, m15, m5):
 
     risk = abs(entry - sl)
     if risk <= 0 or risk > atr * MAX_SL_ATR:
-        print("Signal rejected: Invalid or too large risk.")
         return None
 
-    current_5m_price = float(latest_5m["Close"])
-    if abs(current_5m_price - entry) > atr * MAX_SIGNAL_MOVE_ATR:
-        print("Signal rejected: Price moved too far from signal.")
+    if abs(float(latest_5m["Close"]) - entry) > atr * MAX_SIGNAL_MOVE_ATR:
         return None
 
     if direction == "LONG":
@@ -376,26 +329,26 @@ def find_signal(h1, m15, m5):
 
 
 # ============================================================
-# FORMAT SIGNAL & MONITOR POSITION (KST & 한글화 적용)
+# TELEGRAM MESSAGE FORMAT (직관적이고 깔끔한 최종 디자인)
 # ============================================================
 
 def format_entry_message(signal):
     direction = signal["direction"]
     emoji = "🟢" if direction == "LONG" else "🔴"
-    title = "롱 포지션 시그널 (스마트 점수제)" if direction == "LONG" else "숏 포지션 시그널 (스마트 점수제)"
+    title = "롱(매수) 포지션 시그널" if direction == "LONG" else "숏(매도) 포지션 시그널"
     kst_time_str = format_kst_time(signal['signal_time'])
 
     return f"""
 👑 <b>골드 선물 스마트 시그널</b>
 
-{emoji} <b>{title}</b>
+{emoji} <b>{title} (스마트 점수제)</b>
 
 ━━━━━━━━━━━━━━━━━━
 
-💰 <b>진입가 (ENTRY)</b>
+💵 <b>진입가격</b>
 <code>${signal['entry']:,.2f}</code>
 
-🛑 <b>손절가 (SL)</b>
+🛡️ <b>손절가격 (SL)</b> — <i>이 가격 이탈 시 손절</i>
 <code>${signal['sl']:,.2f}</code>
 
 🎯 <b>1차 목표가 (TP1)</b>
@@ -409,20 +362,25 @@ def format_entry_message(signal):
 
 ━━━━━━━━━━━━━━━━━━
 
-📊 RSI : <code>{signal['rsi']:.2f}</code>
-📈 ADX : <code>{signal['adx']:.2f}</code>
-📏 ATR : <code>{signal['atr']:.2f}</code>
-
-⚖️ 리스크 : <code>{signal['risk']:.2f}</code>
+📊 <b>시장 지표 요약</b>
+• RSI : <code>{signal['rsi']:.2f}</code>
+• ADX : <code>{signal['adx']:.2f}</code>
+• ATR : <code>{signal['atr']:.2f}</code>
+• <b>위험 폭(손절 거리)</b> : <code>${signal['risk']:.2f} 달러</code>
 
 🧠 <b>진입 근거</b>
 {signal['reason']}
 
-🕐 시그널 발생 시간 (KST)
+🕐 <b>발생 시간 (KST)</b>
 <code>{kst_time_str}</code>
 
-📊 <a href="https://www.tradingview.com/symbols/GC1!/">트레이딩뷰 골드 차트</a>
+📊 <a href="https://www.tradingview.com/symbols/GC1!/">트레이딩뷰 골드 차트 보기</a>
 """
+
+
+# ============================================================
+# POSITION MONITORING
+# ============================================================
 
 def monitor_position(state, m1):
     if not state or state.get("status") != "active":
@@ -553,14 +511,8 @@ def main():
         save_state(signal)
 
     print("\n====================================")
-    print(" SIGNAL CREATED")
+    print(" SIGNAL CREATED SUCCESSFULLY")
     print("====================================")
-    print(f"Direction : {signal['direction']}")
-    print(f"Entry     : ${signal['entry']:,.2f}")
-    print(f"SL        : ${signal['sl']:,.2f}")
-    print(f"TP1       : ${signal['tp1']:,.2f}")
-    print(f"TP2       : ${signal['tp2']:,.2f}")
-    print(f"TP3       : ${signal['tp3']:,.2f}")
 
 
 if __name__ == "__main__":
