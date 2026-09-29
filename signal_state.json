@@ -5,7 +5,7 @@
   "signal_price": 4184.2998046875,
   "pullback_low": 4185.184035473119,
   "pullback_high": 4188.278843222787,
-  "pullback_touched": false,
+  "pullback_touched": true,
   "signal_time": "2026-09-30T00:50:29.575964+09:00",
   "pending_time": "2026-09-30T00:50:29.575977+09:00",
   "entry": null,
@@ -18,5 +18,5 @@
   "tp3_hit": false,
   "pending_alert_sent": true,
   "entry_alert_sent": false,
-  "last_update": "2026-09-30T00:50:30.358502+09:00"
+  "last_update": "2026-09-30T00:57:10.318233+09:00"
 }
