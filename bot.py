@@ -10,17 +10,17 @@ from datetime import datetime, timedelta, timezone
 
 # =========================================================
 # GOLD FUTURES SMART SIGNAL BOT
-# BALANCED REVERSAL V4
+# BALANCED V5
 # =========================================================
 
 print("=================================")
 print(" GOLD FUTURES SMART SIGNAL BOT")
-print(" BALANCED REVERSAL V4")
+print(" BALANCED V5")
 print("=================================")
 
 
 # =========================================================
-# BASIC SETTINGS
+# BASIC
 # =========================================================
 
 TICKER = "GC=F"
@@ -35,7 +35,7 @@ KST = timezone(timedelta(hours=9))
 
 
 # =========================================================
-# TARGET SETTINGS
+# TARGET
 # =========================================================
 
 TP1_R = 1.20
@@ -44,7 +44,7 @@ TP3_R = 3.00
 
 
 # =========================================================
-# STOP LOSS SETTINGS
+# STOP LOSS
 # =========================================================
 
 MIN_SL_ATR = 0.55
@@ -52,7 +52,7 @@ MAX_SL_ATR = 2.50
 
 
 # =========================================================
-# ENTRY FILTERS
+# ENTRY FILTER
 # =========================================================
 
 MAX_ENTRY_DISTANCE_ATR = 1.50
@@ -60,33 +60,36 @@ MAX_SIGNAL_MOVE_ATR = 0.80
 
 
 # =========================================================
-# NORMAL TREND SETTINGS
+# TREND SIGNAL
 # =========================================================
 
 MIN_ADX = 18.0
-MIN_SIGNAL_SCORE = 4
+TREND_SCORE = 4
 
 
 # =========================================================
-# REVERSAL SETTINGS
+# EARLY SIGNAL
+# =========================================================
+#
+# Early signal intentionally does NOT require
+# EMA20 slope confirmation.
+#
+# This is designed to catch:
+#
+# Price > EMA20 > EMA50
+#
+# before the full 1H trend becomes obvious.
 # =========================================================
 
-REVERSAL_MIN_ADX = 13.0
+EARLY_SCORE = 4
 
-# V4:
-# Reversal requires 5/6 instead of 4/6
-REVERSAL_MIN_SCORE = 5
+EARLY_MIN_ADX = 13.0
 
+LONG_RSI_MIN = 52.0
+LONG_RSI_MAX = 68.0
 
-# =========================================================
-# RSI
-# =========================================================
-
-MAX_LONG_RSI = 68.0
-MIN_LONG_REVERSAL_RSI = 52.0
-
-MIN_SHORT_RSI = 32.0
-MAX_SHORT_REVERSAL_RSI = 48.0
+SHORT_RSI_MIN = 32.0
+SHORT_RSI_MAX = 48.0
 
 
 # =========================================================
@@ -125,7 +128,9 @@ def send_telegram(message):
         )
 
         if response.status_code == 200:
+
             print("Telegram sent.")
+
             return True
 
         print(
@@ -145,7 +150,7 @@ def send_telegram(message):
 
 
 # =========================================================
-# TIME HELPERS
+# TIME
 # =========================================================
 
 def normalize_timestamp(ts):
@@ -162,7 +167,9 @@ def format_kst_time(ts):
 
     ts = normalize_timestamp(ts)
 
-    return ts.tz_convert(KST).strftime(
+    return ts.tz_convert(
+        KST
+    ).strftime(
         "%Y-%m-%d %H:%M"
     )
 
@@ -173,7 +180,9 @@ def format_kst_time(ts):
 
 def load_state():
 
-    if not os.path.exists(STATE_FILE):
+    if not os.path.exists(
+        STATE_FILE
+    ):
 
         return {
             "status": "idle"
@@ -220,7 +229,9 @@ def log_event(event):
 
     logs = []
 
-    if os.path.exists(LOG_FILE):
+    if os.path.exists(
+        LOG_FILE
+    ):
 
         try:
 
@@ -255,7 +266,7 @@ def log_event(event):
 
 
 # =========================================================
-# DATA CLEAN
+# CLEAN DATA
 # =========================================================
 
 def clean_dataframe(df):
@@ -321,15 +332,33 @@ def clean_dataframe(df):
 
 def download_data():
 
-    print("Downloading market data...")
+    print(
+        "Downloading market data..."
+    )
 
     data = {}
 
     periods = {
-        "1h": ("10d", "1h"),
-        "15m": ("7d", "15m"),
-        "5m": ("5d", "5m"),
-        "1m": ("2d", "1m")
+
+        "1h": (
+            "10d",
+            "1h"
+        ),
+
+        "15m": (
+            "7d",
+            "15m"
+        ),
+
+        "5m": (
+            "5d",
+            "5m"
+        ),
+
+        "1m": (
+            "2d",
+            "1m"
+        )
     }
 
     for name, (
@@ -347,7 +376,10 @@ def download_data():
                 progress=False
             )
 
-            if df is None or df.empty:
+            if (
+                df is None
+                or df.empty
+            ):
 
                 print(
                     f"{name}: no data"
@@ -355,12 +387,15 @@ def download_data():
 
                 continue
 
-            df = clean_dataframe(df)
+            df = clean_dataframe(
+                df
+            )
 
             data[name] = df
 
             print(
-                f"{name}: {len(df)} candles"
+                f"{name}: "
+                f"{len(df)} candles"
             )
 
         except Exception as e:
@@ -529,8 +564,6 @@ def add_indicators(df):
         0
     )
 
-    atr14 = df["ATR"]
-
     plus_di = (
         100
         * pd.Series(
@@ -542,7 +575,7 @@ def add_indicators(df):
             adjust=False
         )
         .mean()
-        / atr14
+        / df["ATR"]
     )
 
     minus_di = (
@@ -556,7 +589,7 @@ def add_indicators(df):
             adjust=False
         )
         .mean()
-        / atr14
+        / df["ATR"]
     )
 
     dx = (
@@ -621,38 +654,36 @@ def add_indicators(df):
 
 
 # =========================================================
-# V4 5M REVERSAL CONFIRMATION
+# 5M CONFIRMATION
 # =========================================================
 #
-# 기존 V3:
-# 5M에서 여러 조건을 동시에 만족해야 PASS
-#
-# V4:
-# 아래 3가지 중 2개 이상이면 PASS
+# 3 conditions:
 #
 # LONG
-# 1. 가격이 EMA20 위
-# 2. 현재 종가가 이전 종가보다 높음
+# 1. Close > EMA20
+# 2. Close > previous Close
 # 3. RSI >= 50
 #
-# SHORT
-# 1. 가격이 EMA20 아래
-# 2. 현재 종가가 이전 종가보다 낮음
-# 3. RSI <= 50
+# Need 2 / 3
 #
+# SHORT is the opposite.
 # =========================================================
 
-def check_5m_reversal_confirmation(m5):
+def check_5m_confirmation(m5):
 
     if len(m5) < 4:
 
-        return False, False
+        return (
+            False,
+            False,
+            0,
+            0
+        )
 
     c = m5.iloc[-2]
     p = m5.iloc[-3]
 
     long_score = 0
-
     short_score = 0
 
     # LONG
@@ -675,17 +706,11 @@ def check_5m_reversal_confirmation(m5):
     if c["RSI"] <= 50:
         short_score += 1
 
-    long_confirm = (
-        long_score >= 2
-    )
-
-    short_confirm = (
-        short_score >= 2
-    )
-
     return (
-        long_confirm,
-        short_confirm
+        long_score >= 2,
+        short_score >= 2,
+        long_score,
+        short_score
     )
 
 
@@ -719,20 +744,19 @@ def find_signal(data):
 
         return None
 
-    # -----------------------------------------------------
+    # =====================================================
     # CLOSED CANDLES
-    # -----------------------------------------------------
+    # =====================================================
 
     h = h1.iloc[-2]
     hp = h1.iloc[-3]
-    hp2 = h1.iloc[-4]
 
     m = m15.iloc[-2]
     mp = m15.iloc[-3]
 
-    # -----------------------------------------------------
-    # CURRENT
-    # -----------------------------------------------------
+    # =====================================================
+    # CURRENT M15 VALUES
+    # =====================================================
 
     price = float(
         m["Close"]
@@ -763,7 +787,7 @@ def find_signal(data):
         return None
 
     # =====================================================
-    # H1 TREND
+    # H1 FULL TREND
     # =====================================================
 
     h1_bull = (
@@ -779,33 +803,48 @@ def find_signal(data):
     )
 
     # =====================================================
-    # H1 REVERSAL
+    # H1 EARLY TREND
+    # =====================================================
+    #
+    # IMPORTANT:
+    #
+    # No EMA20 slope requirement.
+    #
+    # LONG:
+    # Price > EMA20 > EMA50
+    #
+    # SHORT:
+    # Price < EMA20 < EMA50
+    #
+    # This catches the move before the full trend
+    # confirmation.
     # =====================================================
 
-    bullish_reversal = (
+    h1_early_bull = (
         h["Close"] > h["EMA20"]
-        and h["EMA20"] >= hp["EMA20"]
-        and (
-            hp["EMA20"] <= hp2["EMA20"]
-            or h["Close"] > hp["High"]
-        )
-        and h["Close"]
-        >= h["EMA50"] * 0.998
+        and h["EMA20"] > h["EMA50"]
     )
 
-    bearish_reversal = (
+    h1_early_bear = (
         h["Close"] < h["EMA20"]
-        and h["EMA20"] <= hp["EMA20"]
-        and (
-            hp["EMA20"] >= hp2["EMA20"]
-            or h["Close"] < hp["Low"]
-        )
-        and h["Close"]
-        <= h["EMA50"] * 1.002
+        and h["EMA20"] < h["EMA50"]
     )
 
     # =====================================================
-    # EMA DISTANCE
+    # 5M
+    # =====================================================
+
+    (
+        long_5m,
+        short_5m,
+        long_5m_score,
+        short_5m_score
+    ) = check_5m_confirmation(
+        m5
+    )
+
+    # =====================================================
+    # ENTRY DISTANCE
     # =====================================================
 
     ema_distance = abs(
@@ -819,16 +858,6 @@ def find_signal(data):
     entry_distance_ok = (
         entry_distance_atr
         <= MAX_ENTRY_DISTANCE_ATR
-    )
-
-    # =====================================================
-    # 5M CONFIRM
-    # =====================================================
-
-    long_5m, short_5m = (
-        check_5m_reversal_confirmation(
-            m5
-        )
     )
 
     # =====================================================
@@ -875,7 +904,7 @@ def find_signal(data):
         normal_short_score += 1
 
     if (
-        MIN_SHORT_RSI
+        SHORT_RSI_MIN
         <= m["RSI"]
         <= 52
     ):
@@ -894,81 +923,87 @@ def find_signal(data):
         normal_short_score += 1
 
     # =====================================================
-    # REVERSAL LONG SCORE
+    # EARLY LONG SCORE
+    # =====================================================
+    #
+    # 1. H1 price > EMA20
+    # 2. H1 EMA20 > EMA50
+    # 3. M15 bullish candle
+    # 4. M15 RSI 52~68
+    # 5. M15 price > EMA20
+    # 6. 5M confirmation
+    #
+    # Need 4 / 6
     # =====================================================
 
-    reversal_long_score = 0
+    early_long_score = 0
 
-    # 1. Price above EMA20
-    if m["Close"] > m["EMA20"]:
-        reversal_long_score += 1
+    if h["Close"] > h["EMA20"]:
+        early_long_score += 1
 
-    # 2. Bullish candle
+    if h["EMA20"] > h["EMA50"]:
+        early_long_score += 1
+
     if m["Close"] > m["Open"]:
-        reversal_long_score += 1
+        early_long_score += 1
 
-    # 3. Break previous high
-    if m["Close"] > mp["High"]:
-        reversal_long_score += 1
-
-    # 4. RSI
     if (
-        MIN_LONG_REVERSAL_RSI
+        LONG_RSI_MIN
         <= m["RSI"]
-        <= MAX_LONG_RSI
+        <= LONG_RSI_MAX
     ):
-        reversal_long_score += 1
+        early_long_score += 1
 
-    # 5. ADX
-    if m["ADX"] >= REVERSAL_MIN_ADX:
-        reversal_long_score += 1
+    if m["Close"] > m["EMA20"]:
+        early_long_score += 1
 
-    # 6. 5M confirmation
     if long_5m:
-        reversal_long_score += 1
+        early_long_score += 1
 
     # =====================================================
-    # REVERSAL SHORT SCORE
+    # EARLY SHORT SCORE
     # =====================================================
 
-    reversal_short_score = 0
+    early_short_score = 0
 
-    # 1. Price below EMA20
-    if m["Close"] < m["EMA20"]:
-        reversal_short_score += 1
+    if h["Close"] < h["EMA20"]:
+        early_short_score += 1
 
-    # 2. Bearish candle
+    if h["EMA20"] < h["EMA50"]:
+        early_short_score += 1
+
     if m["Close"] < m["Open"]:
-        reversal_short_score += 1
+        early_short_score += 1
 
-    # 3. Break previous low
-    if m["Close"] < mp["Low"]:
-        reversal_short_score += 1
-
-    # 4. RSI
     if (
-        MIN_SHORT_RSI
+        SHORT_RSI_MIN
         <= m["RSI"]
-        <= MAX_SHORT_REVERSAL_RSI
+        <= SHORT_RSI_MAX
     ):
-        reversal_short_score += 1
+        early_short_score += 1
 
-    # 5. ADX
-    if m["ADX"] >= REVERSAL_MIN_ADX:
-        reversal_short_score += 1
+    if m["Close"] < m["EMA20"]:
+        early_short_score += 1
 
-    # 6. 5M confirmation
     if short_5m:
-        reversal_short_score += 1
+        early_short_score += 1
 
     # =====================================================
     # DISPLAY
     # =====================================================
 
     print()
-    print("====================================")
-    print(" CURRENT MARKET CHECK")
-    print("====================================")
+    print(
+        "===================================="
+    )
+
+    print(
+        " CURRENT MARKET CHECK"
+    )
+
+    print(
+        "===================================="
+    )
 
     print(
         f"Price : ${price:,.2f}"
@@ -995,12 +1030,20 @@ def find_signal(data):
     )
 
     print()
-    print("====================================")
-    print(" LONG CHECK")
-    print("====================================")
+    print(
+        "===================================="
+    )
 
     print(
-        "1H Trend      : "
+        " LONG CHECK"
+    )
+
+    print(
+        "===================================="
+    )
+
+    print(
+        "1H Trend       : "
         + (
             "PASS"
             if h1_bull
@@ -1009,26 +1052,31 @@ def find_signal(data):
     )
 
     print(
-        "1H Reversal   : "
+        "1H Early Trend : "
         + (
             "PASS"
-            if bullish_reversal
+            if h1_early_bull
             else "FAIL"
         )
     )
 
     print(
-        f"Normal Score  : "
+        f"Normal Score   : "
         f"{normal_long_score}/6"
     )
 
     print(
-        f"Reversal Score: "
-        f"{reversal_long_score}/6"
+        f"Early Score    : "
+        f"{early_long_score}/6"
     )
 
     print(
-        "5M Confirm    : "
+        f"5M Score       : "
+        f"{long_5m_score}/3"
+    )
+
+    print(
+        "5M Confirm     : "
         + (
             "PASS"
             if long_5m
@@ -1037,12 +1085,20 @@ def find_signal(data):
     )
 
     print()
-    print("====================================")
-    print(" SHORT CHECK")
-    print("====================================")
+    print(
+        "===================================="
+    )
 
     print(
-        "1H Trend      : "
+        " SHORT CHECK"
+    )
+
+    print(
+        "===================================="
+    )
+
+    print(
+        "1H Trend       : "
         + (
             "PASS"
             if h1_bear
@@ -1051,26 +1107,31 @@ def find_signal(data):
     )
 
     print(
-        "1H Reversal   : "
+        "1H Early Trend : "
         + (
             "PASS"
-            if bearish_reversal
+            if h1_early_bear
             else "FAIL"
         )
     )
 
     print(
-        f"Normal Score  : "
+        f"Normal Score   : "
         f"{normal_short_score}/6"
     )
 
     print(
-        f"Reversal Score: "
-        f"{reversal_short_score}/6"
+        f"Early Score    : "
+        f"{early_short_score}/6"
     )
 
     print(
-        "5M Confirm    : "
+        f"5M Score       : "
+        f"{short_5m_score}/3"
+    )
+
+    print(
+        "5M Confirm     : "
         + (
             "PASS"
             if short_5m
@@ -1079,13 +1140,13 @@ def find_signal(data):
     )
 
     # =====================================================
-    # FINAL CONDITIONS
+    # NORMAL SIGNAL
     # =====================================================
 
     normal_long = (
         h1_bull
         and normal_long_score
-        >= MIN_SIGNAL_SCORE
+        >= TREND_SCORE
         and long_5m
         and adx >= MIN_ADX
     )
@@ -1093,25 +1154,46 @@ def find_signal(data):
     normal_short = (
         h1_bear
         and normal_short_score
-        >= MIN_SIGNAL_SCORE
+        >= TREND_SCORE
         and short_5m
         and adx >= MIN_ADX
     )
 
-    reversal_long = (
-        bullish_reversal
-        and reversal_long_score
-        >= REVERSAL_MIN_SCORE
+    # =====================================================
+    # EARLY SIGNAL
+    # =====================================================
+    #
+    # This is the main V5 improvement.
+    #
+    # We do NOT require:
+    #
+    # EMA20 rising
+    #
+    # We only require:
+    #
+    # H1 structure
+    # +
+    # M15 score
+    # +
+    # ADX
+    # +
+    # 5M confirmation
+    # =====================================================
+
+    early_long = (
+        h1_early_bull
+        and early_long_score
+        >= EARLY_SCORE
         and long_5m
-        and adx >= REVERSAL_MIN_ADX
+        and adx >= EARLY_MIN_ADX
     )
 
-    reversal_short = (
-        bearish_reversal
-        and reversal_short_score
-        >= REVERSAL_MIN_SCORE
+    early_short = (
+        h1_early_bear
+        and early_short_score
+        >= EARLY_SCORE
         and short_5m
-        and adx >= REVERSAL_MIN_ADX
+        and adx >= EARLY_MIN_ADX
     )
 
     # =====================================================
@@ -1119,27 +1201,27 @@ def find_signal(data):
     # =====================================================
 
     direction = None
-    is_reversal = False
+    signal_mode = None
 
     if normal_long:
 
         direction = "LONG"
-        is_reversal = False
+        signal_mode = "TREND"
 
     elif normal_short:
 
         direction = "SHORT"
-        is_reversal = False
+        signal_mode = "TREND"
 
-    elif reversal_long:
+    elif early_long:
 
         direction = "LONG"
-        is_reversal = True
+        signal_mode = "EARLY"
 
-    elif reversal_short:
+    elif early_short:
 
         direction = "SHORT"
-        is_reversal = True
+        signal_mode = "EARLY"
 
     else:
 
@@ -1168,7 +1250,8 @@ def find_signal(data):
     # =====================================================
 
     signal_move = abs(
-        m["Close"] - m["Open"]
+        m["Close"]
+        - m["Open"]
     )
 
     signal_move_atr = (
@@ -1212,7 +1295,9 @@ def find_signal(data):
             - atr * 0.35
         )
 
-        risk = price - sl
+        risk = (
+            price - sl
+        )
 
     else:
 
@@ -1225,7 +1310,9 @@ def find_signal(data):
             + atr * 0.35
         )
 
-        risk = sl - price
+        risk = (
+            sl - price
+        )
 
     risk_atr = (
         risk / atr
@@ -1302,76 +1389,86 @@ def find_signal(data):
         )
     )
 
-    reason = (
-        "REVERSAL"
-        if is_reversal
-        else "TREND"
-    )
-
     # =====================================================
-    # SIGNAL OBJECT
+    # SIGNAL
     # =====================================================
 
     signal = {
 
-        "status": "active",
+        "status":
+            "active",
 
-        "direction": direction,
+        "direction":
+            direction,
 
-        "entry": round(
-            price,
-            2
-        ),
+        "signal_mode":
+            signal_mode,
 
-        "sl": round(
-            sl,
-            2
-        ),
+        "entry":
+            round(
+                price,
+                2
+            ),
 
-        "initial_sl": round(
-            sl,
-            2
-        ),
+        "sl":
+            round(
+                sl,
+                2
+            ),
 
-        "tp1": round(
-            tp1,
-            2
-        ),
+        "initial_sl":
+            round(
+                sl,
+                2
+            ),
 
-        "tp2": round(
-            tp2,
-            2
-        ),
+        "tp1":
+            round(
+                tp1,
+                2
+            ),
 
-        "tp3": round(
-            tp3,
-            2
-        ),
+        "tp2":
+            round(
+                tp2,
+                2
+            ),
 
-        "risk": round(
-            risk,
-            2
-        ),
+        "tp3":
+            round(
+                tp3,
+                2
+            ),
 
-        "risk_atr": round(
-            risk_atr,
-            2
-        ),
+        "risk":
+            round(
+                risk,
+                2
+            ),
 
-        "rsi": round(
-            float(m["RSI"]),
-            2
-        ),
+        "risk_atr":
+            round(
+                risk_atr,
+                2
+            ),
 
-        "adx": round(
-            float(m["ADX"]),
-            2
-        ),
+        "rsi":
+            round(
+                float(m["RSI"]),
+                2
+            ),
 
-        "atr": round(
-            float(m["ATR"]),
-            2
-        ),
+        "adx":
+            round(
+                float(m["ADX"]),
+                2
+            ),
+
+        "atr":
+            round(
+                float(m["ATR"]),
+                2
+            ),
 
         "normal_long_score":
             normal_long_score,
@@ -1379,17 +1476,17 @@ def find_signal(data):
         "normal_short_score":
             normal_short_score,
 
-        "reversal_long_score":
-            reversal_long_score,
+        "early_long_score":
+            early_long_score,
 
-        "reversal_short_score":
-            reversal_short_score,
+        "early_short_score":
+            early_short_score,
 
-        "is_reversal":
-            is_reversal,
+        "long_5m_score":
+            long_5m_score,
 
-        "reason":
-            reason,
+        "short_5m_score":
+            short_5m_score,
 
         "signal_time":
             signal_time.isoformat(),
@@ -1420,16 +1517,24 @@ def find_signal(data):
     # =====================================================
 
     print()
-    print("====================================")
-    print(" SIGNAL FOUND")
-    print("====================================")
+    print(
+        "===================================="
+    )
+
+    print(
+        " SIGNAL FOUND"
+    )
+
+    print(
+        "===================================="
+    )
 
     print(
         f"Direction : {direction}"
     )
 
     print(
-        f"Reason    : {reason}"
+        f"Mode      : {signal_mode}"
     )
 
     print(
@@ -1461,25 +1566,19 @@ def find_signal(data):
 
 def format_entry_message(signal):
 
-    direction = signal["direction"]
+    if signal["direction"] == "LONG":
 
-    emoji = (
-        "🟢"
-        if direction == "LONG"
-        else "🔴"
-    )
+        emoji = "🟢"
 
-    mode = (
-        "REVERSAL"
-        if signal["is_reversal"]
-        else "TREND"
-    )
+    else:
+
+        emoji = "🔴"
 
     return f"""
 {emoji} GOLD FUTURES SIGNAL
 
-▪ Direction: {direction}
-▪ Mode: {mode}
+▪ Direction: {signal["direction"]}
+▪ Mode: {signal["signal_mode"]}
 
 ▪ ENTRY: ${signal["entry"]:,.2f}
 ▪ SL: ${signal["sl"]:,.2f}
@@ -1495,15 +1594,14 @@ def format_entry_message(signal):
 ▪ ATR: {signal["atr"]:.2f}
 
 ▪ Risk: {signal["risk_atr"]:.2f} ATR
-▪ Signal: {signal["reason"]}
 
-Signal time:
+▪ Signal time:
 {format_kst_time(signal["signal_time"])}
 """.strip()
 
 
 # =========================================================
-# MONITOR
+# POSITION MONITOR
 # =========================================================
 
 def monitor_position(
@@ -1511,9 +1609,10 @@ def monitor_position(
     data
 ):
 
-    if state.get(
-        "status"
-    ) != "active":
+    if (
+        state.get("status")
+        != "active"
+    ):
 
         return state
 
@@ -1560,7 +1659,7 @@ def monitor_position(
     )
 
     # =====================================================
-    # CANDLE MONITOR
+    # MONITOR
     # =====================================================
 
     for timestamp, candle in m1.iterrows():
@@ -1588,9 +1687,9 @@ def monitor_position(
                     f"Price: ${sl:,.2f}"
                 )
 
-                state["status"] = (
-                    "cooldown"
-                )
+                state[
+                    "status"
+                ] = "cooldown"
 
                 state[
                     "cooldown_until"
@@ -1656,9 +1755,11 @@ def monitor_position(
                     "tp2_hit"
                 ] = True
 
-                state["sl"] = (
-                    state["entry"]
-                )
+                state[
+                    "sl"
+                ] = state[
+                    "entry"
+                ]
 
                 log_event({
                     "event": "TP2",
@@ -1685,9 +1786,9 @@ def monitor_position(
                     "tp3_hit"
                 ] = True
 
-                state["status"] = (
-                    "cooldown"
-                )
+                state[
+                    "status"
+                ] = "cooldown"
 
                 state[
                     "cooldown_until"
@@ -1727,9 +1828,9 @@ def monitor_position(
                     f"Price: ${sl:,.2f}"
                 )
 
-                state["status"] = (
-                    "cooldown"
-                )
+                state[
+                    "status"
+                ] = "cooldown"
 
                 state[
                     "cooldown_until"
@@ -1795,9 +1896,11 @@ def monitor_position(
                     "tp2_hit"
                 ] = True
 
-                state["sl"] = (
-                    state["entry"]
-                )
+                state[
+                    "sl"
+                ] = state[
+                    "entry"
+                ]
 
                 log_event({
                     "event": "TP2",
@@ -1824,9 +1927,9 @@ def monitor_position(
                     "tp3_hit"
                 ] = True
 
-                state["status"] = (
-                    "cooldown"
-                )
+                state[
+                    "status"
+                ] = "cooldown"
 
                 state[
                     "cooldown_until"
@@ -1873,7 +1976,7 @@ def main():
     state = load_state()
 
     # =====================================================
-    # ACTIVE POSITION
+    # ACTIVE
     # =====================================================
 
     if (
@@ -1988,7 +2091,7 @@ def main():
         )
 
     # =====================================================
-    # NEW SIGNAL
+    # FIND SIGNAL
     # =====================================================
 
     signal = find_signal(
@@ -2023,7 +2126,7 @@ def main():
             return
 
     # =====================================================
-    # SAVE SIGNAL
+    # SAVE
     # =====================================================
 
     signal[
@@ -2044,8 +2147,8 @@ def main():
         "direction":
             signal["direction"],
 
-        "reason":
-            signal["reason"],
+        "mode":
+            signal["signal_mode"],
 
         "entry":
             signal["entry"],
