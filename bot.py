@@ -1,30 +1,87 @@
 import os
 import json
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
-import requests
-import numpy as np
-import pandas as pd
 import yfinance as yf
+import pandas as pd
+import numpy as np
+import requests
 
 
 # ============================================================
-# 금 선물 스마트 시그널 봇 V11
-#
-# SIGNAL -> PENDING ENTRY -> ACTIVE POSITION
-#
-# M15 LEAD
-# 5M SUPPORT
-# H1 CONTEXT
-# PULLBACK ENTRY
-# TELEGRAM RECOVERY
+# GOLD FUTURES SMART SIGNAL BOT V11.1
+# SIGNAL -> PENDING -> ACTIVE
+# OLD V10/V11 STATE RESET
+# M15 LEAD + 5M SUPPORT
+# H1 CONTEXT ONLY
+# ============================================================
+
+print("====================================")
+print(" 금 선물 스마트 시그널 봇")
+print(" BALANCED V11.1")
+print(" SIGNAL -> PENDING -> ACTIVE")
+print(" M15 LEAD + 5M SUPPORT")
+print(" H1 CONTEXT ONLY")
+print(" FRESH MARKET RE-EVALUATION")
+print(" OLD STATE RESET ENABLED")
+print("====================================")
+
+
+# ============================================================
+# SETTINGS
 # ============================================================
 
 TICKER = "GC=F"
 
 STATE_FILE = "signal_state.json"
 LOG_FILE = "bot_log.json"
+
+STATE_VERSION = "11.1"
+
+M15_INTERVAL = "15m"
+M5_INTERVAL = "5m"
+H1_INTERVAL = "1h"
+M1_INTERVAL = "1m"
+
+# Signal score
+MIN_M15_SCORE = 4
+STRONG_M15_SCORE = 5
+
+# RSI
+LONG_RSI_MIN = 52
+LONG_RSI_MAX = 70
+
+SHORT_RSI_MIN = 30
+SHORT_RSI_MAX = 48
+
+# ADX
+MIN_ADX = 13
+
+# Entry filters
+MAX_ENTRY_DISTANCE_ATR = 2.00
+MAX_SIGNAL_MOVE_ATR = 1.35
+
+# Pending entry
+ENTRY_ZONE_ATR = 0.45
+MAX_PENDING_DISTANCE_ATR = 1.50
+PENDING_TIMEOUT_MINUTES = 90
+
+# Cooldown
+COOLDOWN_MINUTES = 60
+
+# ATR / risk
+ATR_RISK_MIN = 0.55
+ATR_RISK_MAX = 2.50
+
+# Targets
+TP1_R = 1.20
+TP2_R = 2.00
+TP3_R = 3.00
+
+# Swing
+SWING_LOOKBACK = 8
+SL_ATR_BUFFER = 0.35
 
 
 # ============================================================
@@ -39,166 +96,166 @@ TELEGRAM_TOKEN = (
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
 
-# ============================================================
-# 전략 설정
-# ============================================================
+def send_telegram(message):
+    if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
+        print("Telegram credentials missing.")
+        return False
 
-MIN_M15_SCORE = 4
-STRONG_M15_SCORE = 5
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
 
-MIN_ADX = 13.0
+    payload = {
+        "chat_id": TELEGRAM_CHAT_ID,
+        "text": message
+    }
 
-LONG_RSI_MIN = 50.0
-LONG_RSI_MAX = 72.0
+    try:
+        response = requests.post(
+            url,
+            json=payload,
+            timeout=15
+        )
 
-SHORT_RSI_MIN = 28.0
-SHORT_RSI_MAX = 50.0
+        if response.status_code == 200:
+            print("Telegram sent successfully.")
+            return True
 
-# 신호 이후 진입 가격 영역
-ENTRY_ZONE_ATR = 0.45
+        print("Telegram error:", response.text)
 
-# 진입 구간의 방향성
-LONG_ZONE_HIGH_ATR = 0.10
-SHORT_ZONE_LOW_ATR = 0.10
+    except Exception as e:
+        print("Telegram exception:", e)
 
-# 신호 발생 후 너무 멀리 움직이면 대기 취소
-MAX_PENDING_DISTANCE_ATR = 1.50
-
-# 신호가 너무 오래되면 취소
-PENDING_TIMEOUT_MINUTES = 90
-
-# 새 신호 쿨다운
-COOLDOWN_MINUTES = 60
-
-# 손절
-SWING_LOOKBACK = 8
-SL_ATR_BUFFER = 0.35
-
-MIN_RISK_ATR = 0.55
-MAX_RISK_ATR = 2.50
-
-# TP
-TP1_R = 1.20
-TP2_R = 2.00
-TP3_R = 3.00
+    return False
 
 
 # ============================================================
-# 시간 / 출력
+# TIME
 # ============================================================
 
-def now_utc():
-    return datetime.now(timezone.utc)
+KST = timezone(timedelta(hours=9))
 
 
-def now_text():
-    return now_utc().strftime(
-        "%Y-%m-%d %H:%M:%S UTC"
-    )
+def now_kst():
+    return datetime.now(KST)
 
 
-def money(value):
-    return f"${float(value):,.2f}"
+def now_iso():
+    return now_kst().isoformat()
 
 
 # ============================================================
-# 기본 상태
+# DEFAULT STATE
 # ============================================================
 
 def default_state():
-
     return {
+        "version": STATE_VERSION,
+
         "status": "NONE",
 
         "direction": None,
 
-        # PENDING 상태
         "signal_price": None,
+
         "entry_zone_low": None,
         "entry_zone_high": None,
+
         "pending_time": None,
         "pending_alert_sent": False,
 
-        # ACTIVE 상태
         "entry": None,
         "sl": None,
+
         "tp1": None,
         "tp2": None,
         "tp3": None,
-        "entry_time": None,
 
         "tp1_hit": False,
         "tp2_hit": False,
         "tp3_hit": False,
-        "sl_hit": False,
 
         "entry_alert_sent": False,
 
-        "last_alert": None,
+        "signal_time": None,
+        "last_update": None,
 
-        "last_signal_time": None,
-        "last_signal_direction": None,
+        "cooldown_until": None
     }
 
+
+# ============================================================
+# STATE LOAD
+# ============================================================
 
 def load_state():
 
     if not os.path.exists(STATE_FILE):
+        print("No existing state found.")
         return default_state()
 
     try:
 
-        with open(
-            STATE_FILE,
-            "r",
-            encoding="utf-8"
-        ) as f:
-
+        with open(STATE_FILE, "r", encoding="utf-8") as f:
             data = json.load(f)
 
-        state = default_state()
+        # ----------------------------------------------------
+        # IMPORTANT
+        # V10/V11 old state has no V11.1 version.
+        # Reset it ONCE.
+        # ----------------------------------------------------
 
-        if isinstance(data, dict):
-            state.update(data)
+        if data.get("version") != STATE_VERSION:
 
-        return state
+            print("")
+            print("====================================")
+            print(" OLD STATE RESET")
+            print("====================================")
+            print("기존 V10/V11 상태를 초기화합니다.")
+            print("현재 시장을 새롭게 분석합니다.")
+            print("")
+
+            return default_state()
+
+        base = default_state()
+        base.update(data)
+
+        return base
 
     except Exception as e:
 
-        print(
-            f"State load error: {e}"
-        )
+        print("State load error:", e)
 
         return default_state()
 
 
+# ============================================================
+# STATE SAVE
+# ============================================================
+
 def save_state(state):
 
-    temp_file = STATE_FILE + ".tmp"
+    state["version"] = STATE_VERSION
+    state["last_update"] = now_iso()
 
-    with open(
-        temp_file,
-        "w",
-        encoding="utf-8"
-    ) as f:
+    try:
 
-        json.dump(
-            state,
-            f,
-            ensure_ascii=False,
-            indent=2
-        )
+        with open(STATE_FILE, "w", encoding="utf-8") as f:
+            json.dump(
+                state,
+                f,
+                indent=2,
+                ensure_ascii=False
+            )
 
-    os.replace(
-        temp_file,
-        STATE_FILE
-    )
+    except Exception as e:
+
+        print("State save error:", e)
 
 
-def append_log(
-    event,
-    data=None
-):
+# ============================================================
+# LOG
+# ============================================================
+
+def save_log(event, data=None):
 
     logs = []
 
@@ -206,165 +263,54 @@ def append_log(
 
         try:
 
-            with open(
-                LOG_FILE,
-                "r",
-                encoding="utf-8"
-            ) as f:
-
+            with open(LOG_FILE, "r", encoding="utf-8") as f:
                 logs = json.load(f)
 
-            if not isinstance(
-                logs,
-                list
-            ):
-                logs = []
-
         except Exception:
-
             logs = []
 
-    logs.append(
-        {
-            "time": now_text(),
-            "event": event,
-            "data": data or {}
-        }
-    )
+    logs.append({
+        "time": now_iso(),
+        "event": event,
+        "data": data or {}
+    })
 
     logs = logs[-500:]
 
-    with open(
-        LOG_FILE,
-        "w",
-        encoding="utf-8"
-    ) as f:
+    try:
 
-        json.dump(
-            logs,
-            f,
-            ensure_ascii=False,
-            indent=2
-        )
-
-
-# ============================================================
-# TELEGRAM
-# ============================================================
-
-def send_telegram(
-    message,
-    retries=3
-):
-
-    if (
-        not TELEGRAM_TOKEN
-        or not TELEGRAM_CHAT_ID
-    ):
-
-        print()
-        print(
-            "===================================="
-        )
-        print(
-            "TELEGRAM ERROR"
-        )
-        print(
-            "===================================="
-        )
-
-        print(
-            "Telegram credentials missing."
-        )
-
-        return False
-
-    url = (
-        "https://api.telegram.org/bot"
-        f"{TELEGRAM_TOKEN}/sendMessage"
-    )
-
-    payload = {
-        "chat_id": TELEGRAM_CHAT_ID,
-        "text": message,
-        "parse_mode": "HTML",
-        "disable_web_page_preview": True,
-    }
-
-    for attempt in range(
-        1,
-        retries + 1
-    ):
-
-        try:
-
-            response = requests.post(
-                url,
-                data=payload,
-                timeout=15
+        with open(LOG_FILE, "w", encoding="utf-8") as f:
+            json.dump(
+                logs,
+                f,
+                indent=2,
+                ensure_ascii=False
             )
 
-            if response.status_code == 200:
+    except Exception as e:
 
-                result = response.json()
-
-                if result.get("ok"):
-
-                    print(
-                        "Telegram sent successfully."
-                    )
-
-                    return True
-
-                print(
-                    "Telegram API error:",
-                    result
-                )
-
-            else:
-
-                print(
-                    "Telegram HTTP error:",
-                    response.status_code
-                )
-
-                print(
-                    response.text[:500]
-                )
-
-        except Exception as e:
-
-            print(
-                f"Telegram error "
-                f"attempt {attempt}: {e}"
-            )
-
-        if attempt < retries:
-            time.sleep(2)
-
-    return False
+        print("Log save error:", e)
 
 
 # ============================================================
-# MARKET DATA
+# DATA DOWNLOAD
 # ============================================================
 
 def download_data():
 
-    print(
-        "Downloading market data..."
-    )
+    print("")
+    print("Downloading market data...")
 
-    result = {}
+    data = {}
 
-    intervals = {
-        "1h": "180d",
-        "15m": "60d",
-        "5m": "30d",
-        "1m": "7d",
+    periods = {
+        "1h": ("1h", "730d"),
+        "15m": ("15m", "60d"),
+        "5m": ("5m", "60d"),
+        "1m": ("1m", "7d")
     }
 
-    for interval, period in intervals.items():
+    for key, (interval, period) in periods.items():
 
         try:
 
@@ -373,72 +319,34 @@ def download_data():
                 period=period,
                 interval=interval,
                 auto_adjust=False,
-                progress=False,
-                threads=False,
+                progress=False
             )
 
-            if (
-                df is None
-                or df.empty
-            ):
-
-                print(
-                    f"{interval}: NO DATA"
-                )
-
-                result[interval] = None
+            if df is None or df.empty:
+                print(f"{key}: NO DATA")
                 continue
 
-            if isinstance(
-                df.columns,
-                pd.MultiIndex
-            ):
-
-                df.columns = (
-                    df.columns
-                    .get_level_values(0)
-                )
-
-            required = [
-                "Open",
-                "High",
-                "Low",
-                "Close",
-                "Volume",
-            ]
-
-            df = df[
-                required
-            ].copy()
+            if isinstance(df.columns, pd.MultiIndex):
+                df.columns = df.columns.get_level_values(0)
 
             df = df.dropna()
 
-            print(
-                f"{interval}: "
-                f"{len(df)} candles"
-            )
+            data[key] = df
 
-            result[interval] = df
+            print(f"{key}: {len(df)} candles")
 
         except Exception as e:
 
-            print(
-                f"{interval}: ERROR - {e}"
-            )
+            print(f"{key}: ERROR -> {e}")
 
-            result[interval] = None
-
-    return result
+    return data
 
 
 # ============================================================
 # INDICATORS
 # ============================================================
 
-def ema(
-    series,
-    length
-):
+def ema(series, length):
 
     return series.ewm(
         span=length,
@@ -446,20 +354,12 @@ def ema(
     ).mean()
 
 
-def rsi(
-    series,
-    length=14
-):
+def rsi(series, length=14):
 
     delta = series.diff()
 
-    gain = delta.clip(
-        lower=0
-    )
-
-    loss = -delta.clip(
-        upper=0
-    )
+    gain = delta.clip(lower=0)
+    loss = -delta.clip(upper=0)
 
     avg_gain = gain.ewm(
         alpha=1 / length,
@@ -471,53 +371,27 @@ def rsi(
         adjust=False
     ).mean()
 
-    rs = (
-        avg_gain /
-        avg_loss.replace(
-            0,
-            np.nan
-        )
-    )
+    rs = avg_gain / avg_loss.replace(0, np.nan)
 
-    result = (
-        100 -
-        100 / (1 + rs)
-    )
+    result = 100 - (100 / (1 + rs))
 
-    return result.fillna(50)
+    return result
 
 
-def atr(
-    df,
-    length=14
-):
+def atr(df, length=14):
 
     high = df["High"]
     low = df["Low"]
     close = df["Close"]
 
-    previous_close = (
-        close.shift(1)
-    )
+    prev_close = close.shift(1)
 
     tr1 = high - low
-
-    tr2 = (
-        high -
-        previous_close
-    ).abs()
-
-    tr3 = (
-        low -
-        previous_close
-    ).abs()
+    tr2 = (high - prev_close).abs()
+    tr3 = (low - prev_close).abs()
 
     tr = pd.concat(
-        [
-            tr1,
-            tr2,
-            tr3
-        ],
+        [tr1, tr2, tr3],
         axis=1
     ).max(axis=1)
 
@@ -527,60 +401,40 @@ def atr(
     ).mean()
 
 
-def adx(
-    df,
-    length=14
-):
+def adx(df, length=14):
 
     high = df["High"]
     low = df["Low"]
     close = df["Close"]
 
     up_move = high.diff()
-
     down_move = -low.diff()
 
-    plus_dm = np.where(
-        (
-            up_move > down_move
-        )
-        &
-        (
-            up_move > 0
+    plus_dm = pd.Series(
+        np.where(
+            (up_move > down_move) & (up_move > 0),
+            up_move,
+            0
         ),
-        up_move,
-        0
+        index=df.index
     )
 
-    minus_dm = np.where(
-        (
-            down_move > up_move
-        )
-        &
-        (
-            down_move > 0
+    minus_dm = pd.Series(
+        np.where(
+            (down_move > up_move) & (down_move > 0),
+            down_move,
+            0
         ),
-        down_move,
-        0
+        index=df.index
     )
 
-    tr1 = high - low
-
-    tr2 = (
-        high -
-        close.shift()
-    ).abs()
-
-    tr3 = (
-        low -
-        close.shift()
-    ).abs()
+    prev_close = close.shift(1)
 
     tr = pd.concat(
         [
-            tr1,
-            tr2,
-            tr3
+            high - low,
+            (high - prev_close).abs(),
+            (low - prev_close).abs()
         ],
         axis=1
     ).max(axis=1)
@@ -590,27 +444,13 @@ def adx(
         adjust=False
     ).mean()
 
-    plus_dm = pd.Series(
-        plus_dm,
-        index=df.index
-    )
-
-    minus_dm = pd.Series(
-        minus_dm,
-        index=df.index
-    )
-
     plus_di = (
         100 *
         plus_dm.ewm(
             alpha=1 / length,
             adjust=False
         ).mean()
-        /
-        atr_value.replace(
-            0,
-            np.nan
-        )
+        / atr_value
     )
 
     minus_di = (
@@ -619,1129 +459,601 @@ def adx(
             alpha=1 / length,
             adjust=False
         ).mean()
-        /
-        atr_value.replace(
-            0,
-            np.nan
-        )
-    )
-
-    denominator = (
-        plus_di +
-        minus_di
-    ).replace(
-        0,
-        np.nan
+        / atr_value
     )
 
     dx = (
         100 *
-        (
-            plus_di -
-            minus_di
-        ).abs()
+        (plus_di - minus_di).abs()
         /
-        denominator
+        (plus_di + minus_di).replace(0, np.nan)
     )
 
     return dx.ewm(
         alpha=1 / length,
         adjust=False
-    ).mean().fillna(0)
-
-
-def prepare(df):
-
-    df = df.copy()
-
-    df["EMA20"] = ema(
-        df["Close"],
-        20
-    )
-
-    df["EMA50"] = ema(
-        df["Close"],
-        50
-    )
-
-    df["RSI"] = rsi(
-        df["Close"],
-        14
-    )
-
-    df["ATR"] = atr(
-        df,
-        14
-    )
-
-    df["ADX"] = adx(
-        df,
-        14
-    )
-
-    return df.dropna()
+    ).mean()
 
 
 # ============================================================
-# H1 CONTEXT
+# MARKET ANALYSIS
 # ============================================================
 
-def h1_context(df):
+def analyze_market(data):
 
-    row = df.iloc[-1]
+    m15 = data["15m"].copy()
+    m5 = data["5m"].copy()
+    h1 = data["1h"].copy()
 
-    close = float(
-        row["Close"]
-    )
+    # --------------------------------------------------------
+    # M15
+    # --------------------------------------------------------
 
-    e20 = float(
-        row["EMA20"]
-    )
+    m15["EMA20"] = ema(m15["Close"], 20)
+    m15["EMA50"] = ema(m15["Close"], 50)
+    m15["RSI"] = rsi(m15["Close"])
+    m15["ADX"] = adx(m15)
+    m15["ATR"] = atr(m15)
 
-    e50 = float(
-        row["EMA50"]
-    )
+    last15 = m15.iloc[-1]
+    prev15 = m15.iloc[-2]
 
-    bull = (
-        close > e20
-        and e20 > e50
-    )
+    close15 = float(last15["Close"])
+    ema20_15 = float(last15["EMA20"])
+    ema50_15 = float(last15["EMA50"])
+    rsi15 = float(last15["RSI"])
+    adx15 = float(last15["ADX"])
+    atr15 = float(last15["ATR"])
 
-    bear = (
-        close < e20
-        and e20 < e50
-    )
+    # --------------------------------------------------------
+    # 5M
+    # --------------------------------------------------------
 
-    return bull, bear
+    m5["EMA20"] = ema(m5["Close"], 20)
+    m5["EMA50"] = ema(m5["Close"], 50)
+    m5["RSI"] = rsi(m5["Close"])
 
+    last5 = m5.iloc[-1]
 
-# ============================================================
-# M15 SCORE
-# ============================================================
+    close5 = float(last5["Close"])
+    ema20_5 = float(last5["EMA20"])
+    ema50_5 = float(last5["EMA50"])
+    rsi5 = float(last5["RSI"])
 
-def m15_score(df):
+    # --------------------------------------------------------
+    # H1
+    # --------------------------------------------------------
 
-    row = df.iloc[-1]
-    prev = df.iloc[-2]
+    h1["EMA20"] = ema(h1["Close"], 20)
+    h1["EMA50"] = ema(h1["Close"], 50)
 
-    close = float(
-        row["Close"]
-    )
+    last1h = h1.iloc[-1]
 
-    e20 = float(
-        row["EMA20"]
-    )
+    close1h = float(last1h["Close"])
+    ema20_1h = float(last1h["EMA20"])
+    ema50_1h = float(last1h["EMA50"])
 
-    e50 = float(
-        row["EMA50"]
-    )
-
-    r = float(
-        row["RSI"]
-    )
-
-    a = float(
-        row["ADX"]
-    )
-
-    prev_high = float(
-        prev["High"]
-    )
-
-    prev_low = float(
-        prev["Low"]
-    )
-
-    bullish_candle = (
-        float(row["Close"])
-        >
-        float(row["Open"])
-    )
-
-    bearish_candle = (
-        float(row["Close"])
-        <
-        float(row["Open"])
-    )
+    # --------------------------------------------------------
+    # M15 SCORE
+    # --------------------------------------------------------
 
     long_score = 0
     short_score = 0
 
-    # 1
-    if close > e20:
+    # Price vs EMA20
+    if close15 > ema20_15:
         long_score += 1
 
-    if close < e20:
+    if close15 < ema20_15:
         short_score += 1
 
-    # 2
-    if e20 > e50:
+    # EMA20 vs EMA50
+    if ema20_15 > ema50_15:
         long_score += 1
 
-    if e20 < e50:
+    if ema20_15 < ema50_15:
         short_score += 1
 
-    # 3
-    if bullish_candle:
+    # RSI
+    if LONG_RSI_MIN <= rsi15 <= LONG_RSI_MAX:
         long_score += 1
 
-    if bearish_candle:
+    if SHORT_RSI_MIN <= rsi15 <= SHORT_RSI_MAX:
         short_score += 1
 
-    # 4
-    if close > prev_high:
-        long_score += 1
-
-    if close < prev_low:
-        short_score += 1
-
-    # 5
-    if (
-        LONG_RSI_MIN
-        <= r
-        <= LONG_RSI_MAX
-    ):
-        long_score += 1
-
-    if (
-        SHORT_RSI_MIN
-        <= r
-        <= SHORT_RSI_MAX
-    ):
-        short_score += 1
-
-    # 6
-    if a >= MIN_ADX:
-
-        if close > e20:
+    # ADX
+    if adx15 >= MIN_ADX:
+        if close15 > ema20_15:
             long_score += 1
 
-        if close < e20:
+        if close15 < ema20_15:
             short_score += 1
 
-    return (
-        long_score,
-        short_score
-    )
-
-
-# ============================================================
-# 5M SCORE
-# ============================================================
-
-def m5_score(df):
-
-    row = df.iloc[-1]
-    prev = df.iloc[-2]
-
-    close = float(
-        row["Close"]
-    )
-
-    e20 = float(
-        row["EMA20"]
-    )
-
-    e50 = float(
-        row["EMA50"]
-    )
-
-    prev_close = float(
-        prev["Close"]
-    )
-
-    long_score = 0
-    short_score = 0
-
-    if close > e20:
+    # Candle direction
+    if close15 > float(prev15["Close"]):
         long_score += 1
 
-    if close < e20:
+    if close15 < float(prev15["Close"]):
         short_score += 1
 
-    if e20 > e50:
-        long_score += 1
-
-    if e20 < e50:
-        short_score += 1
-
-    if close > prev_close:
-        long_score += 1
-
-    if close < prev_close:
-        short_score += 1
-
-    return (
-        long_score,
-        short_score
+    # Momentum
+    m15_change = abs(
+        close15 - float(prev15["Close"])
     )
 
+    if m15_change <= atr15 * MAX_SIGNAL_MOVE_ATR:
 
-# ============================================================
-# DISTANCE
-# ============================================================
+        if close15 > float(prev15["Close"]):
+            long_score += 1
 
-def distance_from_ema(df):
+        if close15 < float(prev15["Close"]):
+            short_score += 1
 
-    row = df.iloc[-1]
+    # Cap score to 6
+    long_score = min(long_score, 6)
+    short_score = min(short_score, 6)
 
-    close = float(
-        row["Close"]
+    # --------------------------------------------------------
+    # 5M SCORE
+    # --------------------------------------------------------
+
+    long_5_score = 0
+    short_5_score = 0
+
+    if close5 > ema20_5:
+        long_5_score += 1
+
+    if ema20_5 > ema50_5:
+        long_5_score += 1
+
+    if rsi5 >= 50:
+        long_5_score += 1
+
+    if close5 < ema20_5:
+        short_5_score += 1
+
+    if ema20_5 < ema50_5:
+        short_5_score += 1
+
+    if rsi5 <= 50:
+        short_5_score += 1
+
+    # --------------------------------------------------------
+    # H1 CONTEXT
+    # --------------------------------------------------------
+
+    h1_bull = (
+        close1h > ema20_1h
+        and ema20_1h > ema50_1h
     )
 
-    e20 = float(
-        row["EMA20"]
+    h1_bear = (
+        close1h < ema20_1h
+        and ema20_1h < ema50_1h
     )
 
-    atr_value = float(
-        row["ATR"]
-    )
-
-    if atr_value <= 0:
-        return 999
-
-    return (
-        abs(close - e20)
-        / atr_value
-    )
-
-
-# ============================================================
-# 최근 움직임
-# ============================================================
-
-def recent_move_atr(df):
-
-    row = df.iloc[-1]
-
-    close = float(
-        row["Close"]
-    )
-
-    atr_value = float(
-        row["ATR"]
-    )
-
-    if atr_value <= 0:
-        return 999
-
-    lookback = min(
-        3,
-        len(df) - 1
-    )
-
-    old_close = float(
-        df.iloc[
-            -1 - lookback
-        ]["Close"]
-    )
-
-    return (
-        abs(close - old_close)
-        / atr_value
-    )
-
-
-# ============================================================
-# CANDLE
-# ============================================================
-
-def candle_strength(df):
-
-    row = df.iloc[-1]
-
-    body = abs(
-        float(row["Close"])
-        -
-        float(row["Open"])
-    )
-
-    candle_range = (
-        float(row["High"])
-        -
-        float(row["Low"])
-    )
-
-    if candle_range <= 0:
-        return 0
-
-    return body / candle_range
-
-
-# ============================================================
-# COOLDOWN
-# ============================================================
-
-def cooldown_ok(state):
-
-    last_time = state.get(
-        "last_signal_time"
-    )
-
-    if not last_time:
-        return True
-
-    try:
-
-        last = datetime.fromisoformat(
-            last_time
-        )
-
-        if last.tzinfo is None:
-
-            last = last.replace(
-                tzinfo=timezone.utc
-            )
-
-        elapsed = (
-            now_utc() - last
-        ).total_seconds() / 60
-
-        return (
-            elapsed >=
-            COOLDOWN_MINUTES
-        )
-
-    except Exception:
-
-        return True
-
-
-# ============================================================
-# V10 ACTIVE -> V11 PENDING 변환
-# ============================================================
-
-def migrate_old_active_state(state):
-
-    if state.get("status") == "PENDING":
-        return state
-
-    if (
-        state.get("status") == "ACTIVE"
-    ):
-        return state
-
-    # V10은 active=True 형태였음
-    if state.get("active"):
-
-        direction = state.get(
-            "direction"
-        )
-
-        entry = state.get(
-            "entry"
-        )
-
-        if (
-            direction
-            and entry
-        ):
-
-            entry = float(entry)
-
-            # 기존 진입가를
-            # 새로운 "신호 기준가"로 사용
-            state["status"] = "PENDING"
-
-            state["signal_price"] = entry
-
-            if direction == "LONG":
-
-                state["entry_zone_low"] = (
-                    entry * 0.9990
-                )
-
-                state["entry_zone_high"] = (
-                    entry * 1.0005
-                )
-
-            else:
-
-                state["entry_zone_low"] = (
-                    entry * 0.9995
-                )
-
-                state["entry_zone_high"] = (
-                    entry * 1.0010
-                )
-
-            state["pending_time"] = (
-                state.get(
-                    "entry_time"
-                )
-                or now_text()
-            )
-
-            state["pending_alert_sent"] = True
-
-            state["active"] = False
-
-            print()
-            print(
-                "===================================="
-            )
-            print(
-                "V10 POSITION -> V11 PENDING"
-            )
-            print(
-                "===================================="
-            )
-
-            print(
-                "기존 V10 포지션을"
-            )
-
-            print(
-                "새로운 진입 대기 상태로 변환했습니다."
-            )
-
-            save_state(state)
-
-    return state
-
-
-# ============================================================
-# 진입 대기 메시지
-# ============================================================
-
-def pending_message(state):
-
-    direction = state[
-        "direction"
-    ]
-
-    if direction == "LONG":
-
-        title = "🟡 롱 진입 대기"
-
-        direction_text = "롱"
-
-    else:
-
-        title = "🟡 숏 진입 대기"
-
-        direction_text = "숏"
-
-    return f"""
-<b>🥇 금 선물 스마트 시그널</b>
-
-{title}
-━━━━━━━━━━━━━━━━━━
-
-📌 방향 : <b>{direction_text}</b>
-
-📍 신호 기준가 :
-<b>{money(state["signal_price"])}</b>
-
-🎯 진입 구간 :
-<b>{money(state["entry_zone_low"])}</b>
-~
-<b>{money(state["entry_zone_high"])}</b>
-
-━━━━━━━━━━━━━━━━━━
-⚠️ 아직 실제 진입 포지션이 아닙니다.
-가격이 진입 구간에 들어오면
-실제 진입 신호가 발생합니다.
-
-━━━━━━━━━━━━━━━━━━
-⚙️ M15 주도 + 5M 확인
-━━━━━━━━━━━━━━━━━━
-"""
-
-
-# ============================================================
-# 실제 진입 메시지
-# ============================================================
-
-def active_entry_message(state):
-
-    direction = state[
-        "direction"
-    ]
-
-    if direction == "LONG":
-
-        title = "🟢 롱 실제 진입"
-
-        direction_text = "롱"
-
-    else:
-
-        title = "🔴 숏 실제 진입"
-
-        direction_text = "숏"
-
-    return f"""
-<b>🥇 금 선물 스마트 시그널</b>
-
-{title}
-━━━━━━━━━━━━━━━━━━
-
-📌 방향 : <b>{direction_text}</b>
-
-💰 실제 진입가 :
-<b>{money(state["entry"])}</b>
-
-🛑 손절가 :
-{money(state["sl"])}
-
-🎯 익절 1 :
-{money(state["tp1"])}
-
-🎯 익절 2 :
-{money(state["tp2"])}
-
-🎯 익절 3 :
-{money(state["tp3"])}
-
-━━━━━━━━━━━━━━━━━━
-⚙️ M15 주도 + 5M 확인
-━━━━━━━━━━━━━━━━━━
-"""
-
-
-# ============================================================
-# PENDING 만료 메시지
-# ============================================================
-
-def pending_cancel_message(state):
-
-    direction = state[
-        "direction"
-    ]
-
-    if direction == "LONG":
-        emoji = "🟢"
-    else:
-        emoji = "🔴"
-
-    return f"""
-<b>🥇 금 선물 스마트 시그널</b>
-
-{emoji} <b>진입 대기 취소</b>
-━━━━━━━━━━━━━━━━━━
-
-방향 : {direction}
-
-신호 기준가 :
-{money(state["signal_price"])}
-
-━━━━━━━━━━━━━━━━━━
-가격이 진입 구간으로 돌아오지 않아
-이번 신호를 취소했습니다.
-━━━━━━━━━━━━━━━━━━
-"""
-
-
-# ============================================================
-# PENDING 생성
-# ============================================================
-
-def create_pending(
-    state,
-    direction,
-    df15,
-    m15_long,
-    m15_short,
-    m5_long,
-    m5_short
-):
-
-    row = df15.iloc[-1]
-
-    signal_price = float(
-        row["Close"]
-    )
-
-    atr_value = float(
-        row["ATR"]
-    )
-
-    if direction == "LONG":
-
-        zone_low = (
-            signal_price
-            -
-            atr_value *
-            ENTRY_ZONE_ATR
-        )
-
-        zone_high = (
-            signal_price
-            +
-            atr_value *
-            LONG_ZONE_HIGH_ATR
-        )
-
-    else:
-
-        zone_low = (
-            signal_price
-            -
-            atr_value *
-            SHORT_ZONE_LOW_ATR
-        )
-
-        zone_high = (
-            signal_price
-            +
-            atr_value *
-            ENTRY_ZONE_ATR
-        )
-
-    new_state = default_state()
-
-    new_state["status"] = "PENDING"
-
-    new_state["direction"] = (
-        direction
-    )
-
-    new_state["signal_price"] = (
-        signal_price
-    )
-
-    new_state["entry_zone_low"] = (
-        zone_low
-    )
-
-    new_state["entry_zone_high"] = (
-        zone_high
-    )
-
-    new_state["pending_time"] = (
-        now_text()
-    )
-
-    new_state["pending_alert_sent"] = (
-        False
-    )
-
-    new_state["last_signal_time"] = (
-        now_utc().isoformat()
-    )
-
-    new_state["last_signal_direction"] = (
-        direction
-    )
-
-    print()
+    # --------------------------------------------------------
+    # OUTPUT
+    # --------------------------------------------------------
+
+    print("")
+    print("====================================")
+    print(" CURRENT MARKET CHECK")
+    print("====================================")
+
+    print(f"M15 Close : ${close15:,.2f}")
+    print(f"EMA20     : ${ema20_15:,.2f}")
+    print(f"EMA50     : ${ema50_15:,.2f}")
+    print(f"RSI       : {rsi15:.2f}")
+    print(f"ADX       : {adx15:.2f}")
+    print(f"ATR       : {atr15:.2f}")
+
+    print("")
+    print("====================================")
+    print(" LONG CHECK")
+    print("====================================")
+
+    print(f"M15 Score : {long_score}/6")
+    print(f"5M Score  : {long_5_score}/3")
     print(
-        "===================================="
+        f"H1        : "
+        f"{'BULL' if h1_bull else 'NOT BULL'}"
     )
+
+    print("")
+    print("====================================")
+    print(" SHORT CHECK")
+    print("====================================")
+
+    print(f"M15 Score : {short_score}/6")
+    print(f"5M Score  : {short_5_score}/3")
     print(
-        "PENDING ENTRY CREATED"
-    )
-    print(
-        "===================================="
+        f"H1        : "
+        f"{'BEAR' if h1_bear else 'NOT BEAR'}"
     )
 
-    print(
-        f"Direction     : {direction}"
+    # --------------------------------------------------------
+    # Signal selection
+    # --------------------------------------------------------
+
+    long_valid = (
+        long_score >= MIN_M15_SCORE
+        and rsi15 >= LONG_RSI_MIN
+        and rsi15 <= LONG_RSI_MAX
     )
 
-    print(
-        f"Signal Price  : "
-        f"{money(signal_price)}"
+    short_valid = (
+        short_score >= MIN_M15_SCORE
+        and rsi15 >= SHORT_RSI_MIN
+        and rsi15 <= SHORT_RSI_MAX
     )
 
-    print(
-        f"Entry Zone    : "
-        f"{money(zone_low)}"
-        f" ~ "
-        f"{money(zone_high)}"
-    )
+    # Strong opposite 5M direction can block
+    if long_valid and short_5_score >= 3 and long_5_score == 0:
+        long_valid = False
 
-    # 텔레그램
-    sent = send_telegram(
-        pending_message(
-            new_state
-        )
-    )
+    if short_valid and long_5_score >= 3 and short_5_score == 0:
+        short_valid = False
 
-    if sent:
+    # --------------------------------------------------------
+    # If both are valid, use stronger M15 score
+    # --------------------------------------------------------
 
-        new_state[
-            "pending_alert_sent"
-        ] = True
+    direction = None
 
-        new_state[
-            "last_alert"
-        ] = "PENDING"
+    if long_valid and short_valid:
 
-    state.clear()
+        if long_score > short_score:
+            direction = "LONG"
 
-    state.update(
-        new_state
-    )
+        elif short_score > long_score:
+            direction = "SHORT"
 
-    save_state(state)
+    elif long_valid:
 
-    append_log(
-        "PENDING_ENTRY",
-        {
-            "direction": direction,
-            "signal_price": signal_price,
-            "entry_zone_low": zone_low,
-            "entry_zone_high": zone_high,
-            "m15_long": m15_long,
-            "m15_short": m15_short,
-            "m5_long": m5_long,
-            "m5_short": m5_short,
-        }
-    )
+        direction = "LONG"
 
-    return state
+    elif short_valid:
 
+        direction = "SHORT"
 
-# ============================================================
-# PENDING 복구
-# ============================================================
+    # --------------------------------------------------------
+    # Entry distance
+    # --------------------------------------------------------
 
-def recover_pending_alert(
-    state
-):
+    if direction:
 
-    if (
-        state.get("status")
-        != "PENDING"
-    ):
+        distance_atr = 0.0
 
-        return state
+        if atr15 > 0:
+            distance_atr = abs(close15 - ema20_15) / atr15
 
-    if state.get(
-        "pending_alert_sent"
-    ):
+        print("")
+        print("====================================")
+        print(" SIGNAL FILTER")
+        print("====================================")
 
-        return state
+        print(f"Distance : {distance_atr:.2f} ATR")
 
-    print()
-    print(
-        "===================================="
-    )
-    print(
-        "PENDING ALERT RECOVERY"
-    )
-    print(
-        "===================================="
-    )
+        if distance_atr > MAX_ENTRY_DISTANCE_ATR:
 
-    if send_telegram(
-        pending_message(state)
-    ):
-
-        state[
-            "pending_alert_sent"
-        ] = True
-
-        state[
-            "last_alert"
-        ] = "PENDING"
-
-        save_state(state)
-
-        print(
-            "Pending alert: SENT"
-        )
-
-    else:
-
-        print(
-            "Pending alert: FAILED"
-        )
-
-    return state
-
-
-# ============================================================
-# PENDING -> ACTIVE
-# ============================================================
-
-def calculate_targets(
-    df,
-    direction,
-    entry
-):
-
-    row = df.iloc[-1]
-
-    atr_value = float(
-        row["ATR"]
-    )
-
-    recent = df.iloc[
-        -SWING_LOOKBACK:
-    ]
-
-    recent_low = float(
-        recent["Low"].min()
-    )
-
-    recent_high = float(
-        recent["High"].max()
-    )
-
-    if direction == "LONG":
-
-        sl = (
-            recent_low
-            -
-            atr_value *
-            SL_ATR_BUFFER
-        )
-
-        risk = (
-            entry - sl
-        )
-
-    else:
-
-        sl = (
-            recent_high
-            +
-            atr_value *
-            SL_ATR_BUFFER
-        )
-
-        risk = (
-            sl - entry
-        )
-
-    min_risk = (
-        atr_value *
-        MIN_RISK_ATR
-    )
-
-    max_risk = (
-        atr_value *
-        MAX_RISK_ATR
-    )
-
-    if risk < min_risk:
-
-        if direction == "LONG":
-
-            sl = (
-                entry -
-                min_risk
-            )
+            print("Distance : FAIL")
+            direction = None
 
         else:
 
-            sl = (
-                entry +
-                min_risk
-            )
-
-        risk = min_risk
-
-    if risk > max_risk:
-
-        return None
-
-    if direction == "LONG":
-
-        tp1 = (
-            entry +
-            risk * TP1_R
-        )
-
-        tp2 = (
-            entry +
-            risk * TP2_R
-        )
-
-        tp3 = (
-            entry +
-            risk * TP3_R
-        )
-
-    else:
-
-        tp1 = (
-            entry -
-            risk * TP1_R
-        )
-
-        tp2 = (
-            entry -
-            risk * TP2_R
-        )
-
-        tp3 = (
-            entry -
-            risk * TP3_R
-        )
+            print("Distance : PASS")
 
     return {
-        "entry": entry,
-        "sl": sl,
-        "tp1": tp1,
-        "tp2": tp2,
-        "tp3": tp3,
-        "risk": risk,
+        "direction": direction,
+        "signal_price": close15,
+        "atr": atr15,
+        "long_score": long_score,
+        "short_score": short_score,
+        "long_5_score": long_5_score,
+        "short_5_score": short_5_score,
+        "h1_bull": h1_bull,
+        "h1_bear": h1_bear
     }
 
 
-def activate_pending(
-    state,
-    df15,
-    current_price
-):
+# ============================================================
+# CREATE PENDING
+# ============================================================
 
-    direction = state[
-        "direction"
-    ]
+def create_pending(state, analysis):
 
-    targets = calculate_targets(
-        df15,
-        direction,
-        current_price
-    )
+    direction = analysis["direction"]
+    signal_price = analysis["signal_price"]
+    atr_value = analysis["atr"]
 
-    if targets is None:
+    zone_size = atr_value * ENTRY_ZONE_ATR
 
-        print(
-            "Risk too large. "
-            "Pending entry rejected."
-        )
+    # --------------------------------------------------------
+    # LONG
+    #
+    # Current signal price becomes upper side of pullback zone.
+    # --------------------------------------------------------
 
-        return state
+    if direction == "LONG":
 
-    state["status"] = "ACTIVE"
+        entry_zone_high = signal_price
+        entry_zone_low = signal_price - zone_size
 
-    state["entry"] = (
-        targets["entry"]
-    )
+    # --------------------------------------------------------
+    # SHORT
+    # --------------------------------------------------------
 
-    state["sl"] = (
-        targets["sl"]
-    )
+    else:
 
-    state["tp1"] = (
-        targets["tp1"]
-    )
+        entry_zone_low = signal_price
+        entry_zone_high = signal_price + zone_size
 
-    state["tp2"] = (
-        targets["tp2"]
-    )
+    state["version"] = STATE_VERSION
 
-    state["tp3"] = (
-        targets["tp3"]
-    )
+    state["status"] = "PENDING"
 
-    state["entry_time"] = (
-        now_text()
-    )
+    state["direction"] = direction
+
+    state["signal_price"] = signal_price
+
+    state["entry_zone_low"] = entry_zone_low
+    state["entry_zone_high"] = entry_zone_high
+
+    state["pending_time"] = now_iso()
+
+    state["pending_alert_sent"] = False
+
+    state["entry"] = None
+    state["sl"] = None
+
+    state["tp1"] = None
+    state["tp2"] = None
+    state["tp3"] = None
 
     state["tp1_hit"] = False
     state["tp2_hit"] = False
     state["tp3_hit"] = False
-    state["sl_hit"] = False
 
     state["entry_alert_sent"] = False
 
-    print()
-    print(
-        "===================================="
-    )
-    print(
-        "ACTUAL ENTRY CONFIRMED"
-    )
-    print(
-        "===================================="
-    )
-
-    print(
-        f"Direction : {direction}"
-    )
-
-    print(
-        f"Entry     : "
-        f"{money(current_price)}"
-    )
-
-    print(
-        f"SL        : "
-        f"{money(state['sl'])}"
-    )
-
-    print(
-        f"TP1       : "
-        f"{money(state['tp1'])}"
-    )
-
-    print(
-        f"TP2       : "
-        f"{money(state['tp2'])}"
-    )
-
-    print(
-        f"TP3       : "
-        f"{money(state['tp3'])}"
-    )
-
-    sent = send_telegram(
-        active_entry_message(
-            state
-        )
-    )
-
-    if sent:
-
-        state[
-            "entry_alert_sent"
-        ] = True
-
-        state[
-            "last_alert"
-        ] = "ENTRY"
+    state["signal_time"] = now_iso()
 
     save_state(state)
 
-    append_log(
-        "ACTUAL_ENTRY",
+    print("")
+    print("====================================")
+    print(" NEW PENDING SIGNAL")
+    print("====================================")
+
+    print(f"Direction    : {direction}")
+    print(f"Signal Price : ${signal_price:,.2f}")
+    print(
+        f"Entry Zone   : "
+        f"${entry_zone_low:,.2f} ~ "
+        f"${entry_zone_high:,.2f}"
+    )
+
+    message = (
+        "🥇 금 선물 스마트 시그널\n\n"
+        "🟡 진입 대기 신호\n"
+        "━━━━━━━━━━━━━━━━━━\n\n"
+        f"📌 방향 : {'롱' if direction == 'LONG' else '숏'}\n"
+        f"📍 신호 가격 : ${signal_price:,.2f}\n"
+        f"🎯 진입 대기 구간 : "
+        f"${entry_zone_low:,.2f} ~ ${entry_zone_high:,.2f}\n\n"
+        "⚠️ 아직 실제 진입 상태가 아닙니다.\n"
+        "가격이 진입 구간에 들어오면 실제 진입을 확정합니다.\n\n"
+        "⚙️ 전략 : M15 주도 + 5M 확인"
+    )
+
+    sent = send_telegram(message)
+
+    if sent:
+
+        state["pending_alert_sent"] = True
+        save_state(state)
+
+    save_log(
+        "PENDING_CREATED",
         {
             "direction": direction,
-            "entry": current_price,
-            "sl": state["sl"],
-            "tp1": state["tp1"],
-            "tp2": state["tp2"],
-            "tp3": state["tp3"],
+            "signal_price": signal_price,
+            "zone_low": entry_zone_low,
+            "zone_high": entry_zone_high
         }
     )
 
-    return state
-
 
 # ============================================================
-# PENDING 관리
+# ACTIVATE PENDING
 # ============================================================
 
-def monitor_pending(
-    state,
-    df15,
-    df1m
-):
+def activate_pending(state, current_price, atr_value):
 
-    if (
-        state.get("status")
-        != "PENDING"
-    ):
-
-        return state
-
-    state = recover_pending_alert(
-        state
-    )
-
-    direction = state[
-        "direction"
-    ]
+    direction = state["direction"]
 
     signal_price = float(
         state["signal_price"]
     )
+
+    # --------------------------------------------------------
+    # Entry
+    # --------------------------------------------------------
+
+    entry = current_price
+
+    # --------------------------------------------------------
+    # Swing reference
+    # --------------------------------------------------------
+
+    # Since current pending state doesn't retain the original
+    # dataframe, use ATR-based risk here.
+    # This keeps the entry logic stable across GitHub runs.
+    # --------------------------------------------------------
+
+    risk = atr_value * 1.35
+
+    risk = max(
+        risk,
+        atr_value * ATR_RISK_MIN
+    )
+
+    risk = min(
+        risk,
+        atr_value * ATR_RISK_MAX
+    )
+
+    # --------------------------------------------------------
+    # LONG
+    # --------------------------------------------------------
+
+    if direction == "LONG":
+
+        sl = entry - risk
+
+        tp1 = entry + risk * TP1_R
+        tp2 = entry + risk * TP2_R
+        tp3 = entry + risk * TP3_R
+
+    # --------------------------------------------------------
+    # SHORT
+    # --------------------------------------------------------
+
+    else:
+
+        sl = entry + risk
+
+        tp1 = entry - risk * TP1_R
+        tp2 = entry - risk * TP2_R
+        tp3 = entry - risk * TP3_R
+
+    state["status"] = "ACTIVE"
+
+    state["entry"] = entry
+    state["sl"] = sl
+
+    state["tp1"] = tp1
+    state["tp2"] = tp2
+    state["tp3"] = tp3
+
+    state["tp1_hit"] = False
+    state["tp2_hit"] = False
+    state["tp3_hit"] = False
+
+    state["entry_alert_sent"] = False
+
+    save_state(state)
+
+    print("")
+    print("====================================")
+    print(" ACTUAL ENTRY CONFIRMED")
+    print("====================================")
+
+    print(f"Direction : {direction}")
+    print(f"Entry     : ${entry:,.2f}")
+    print(f"SL        : ${sl:,.2f}")
+    print(f"TP1       : ${tp1:,.2f}")
+    print(f"TP2       : ${tp2:,.2f}")
+    print(f"TP3       : ${tp3:,.2f}")
+
+    message = (
+        "🥇 금 선물 스마트 시그널\n\n"
+        f"{'🟢 롱 진입 확정' if direction == 'LONG' else '🔴 숏 진입 확정'}\n"
+        "━━━━━━━━━━━━━━━━━━\n\n"
+        f"📌 방향 : {'롱' if direction == 'LONG' else '숏'}\n"
+        f"💰 실제 진입가 : ${entry:,.2f}\n"
+        f"🛑 손절가 : ${sl:,.2f}\n"
+        f"🎯 익절 1 : ${tp1:,.2f}\n"
+        f"🎯 익절 2 : ${tp2:,.2f}\n"
+        f"🎯 익절 3 : ${tp3:,.2f}\n\n"
+        "⚙️ 전략 : M15 주도 + 5M 확인\n"
+        "✅ 진입 대기 구간 도달로 실제 진입 확정"
+    )
+
+    sent = send_telegram(message)
+
+    if sent:
+
+        state["entry_alert_sent"] = True
+        save_state(state)
+
+    save_log(
+        "ENTRY_CONFIRMED",
+        {
+            "direction": direction,
+            "entry": entry,
+            "sl": sl,
+            "tp1": tp1,
+            "tp2": tp2,
+            "tp3": tp3
+        }
+    )
+
+
+# ============================================================
+# MONITOR PENDING
+# ============================================================
+
+def monitor_pending(state, data):
+
+    direction = state["direction"]
+
+    m1 = data["1m"]
+    m15 = data["15m"]
+
+    current_price = float(
+        m1["Close"].iloc[-1]
+    )
+
+    atr_value = float(
+        atr(m15).iloc[-1]
+    )
+
+    pending_time = state.get("pending_time")
+
+    # --------------------------------------------------------
+    # Timeout
+    # --------------------------------------------------------
+
+    if pending_time:
+
+        try:
+
+            created = datetime.fromisoformat(
+                pending_time
+            )
+
+            age_minutes = (
+                now_kst() - created
+            ).total_seconds() / 60
+
+            if age_minutes > PENDING_TIMEOUT_MINUTES:
+
+                print("")
+                print("====================================")
+                print(" PENDING TIMEOUT")
+                print("====================================")
+
+                print("진입 대기 시간이 만료되었습니다.")
+
+                save_log(
+                    "PENDING_TIMEOUT",
+                    {
+                        "direction": direction,
+                        "current_price": current_price
+                    }
+                )
+
+                state.clear()
+                state.update(default_state())
+
+                save_state(state)
+
+                return
+
+        except Exception:
+            pass
 
     zone_low = float(
         state["entry_zone_low"]
@@ -1752,1159 +1064,480 @@ def monitor_pending(
     )
 
     # --------------------------------------------------------
-    # 최신 가격
+    # Distance from signal
     # --------------------------------------------------------
 
-    if (
-        df1m is not None
-        and not df1m.empty
-    ):
+    signal_price = float(
+        state["signal_price"]
+    )
 
-        current_price = float(
-            df1m.iloc[-1]["Close"]
+    distance_atr = 0
+
+    if atr_value > 0:
+
+        distance_atr = (
+            abs(current_price - signal_price)
+            / atr_value
         )
 
-    else:
+    print("")
+    print("====================================")
+    print(" PENDING ENTRY")
+    print("====================================")
 
-        current_price = float(
-            df15.iloc[-1]["Close"]
-        )
-
-    # --------------------------------------------------------
-    # 대기 시간 확인
-    # --------------------------------------------------------
-
-    pending_time = state.get(
-        "pending_time"
-    )
-
-    if pending_time:
-
-        try:
-
-            started = datetime.fromisoformat(
-                pending_time
-            )
-
-            if started.tzinfo is None:
-
-                started = started.replace(
-                    tzinfo=timezone.utc
-                )
-
-            elapsed = (
-                now_utc() - started
-            ).total_seconds() / 60
-
-            if (
-                elapsed >
-                PENDING_TIMEOUT_MINUTES
-            ):
-
-                print()
-                print(
-                    "Pending entry expired."
-                )
-
-                send_telegram(
-                    pending_cancel_message(
-                        state
-                    )
-                )
-
-                append_log(
-                    "PENDING_EXPIRED",
-                    {
-                        "direction": direction,
-                        "signal_price": signal_price,
-                    }
-                )
-
-                state.clear()
-
-                state.update(
-                    default_state()
-                )
-
-                save_state(state)
-
-                return state
-
-        except Exception:
-            pass
-
-    # --------------------------------------------------------
-    # 너무 멀리 움직였는지 확인
-    # --------------------------------------------------------
-
-    atr_value = float(
-        df15.iloc[-1]["ATR"]
-    )
-
-    distance = (
-        abs(
-            current_price -
-            signal_price
-        )
-        /
-        atr_value
-        if atr_value > 0
-        else 999
-    )
-
-    print()
-    print(
-        "===================================="
-    )
-    print(
-        "PENDING ENTRY"
-    )
-    print(
-        "===================================="
-    )
-
-    print(
-        f"Direction    : {direction}"
-    )
-
-    print(
-        f"Signal Price : "
-        f"{money(signal_price)}"
-    )
+    print(f"Direction    : {direction}")
+    print(f"Signal Price : ${signal_price:,.2f}")
 
     print(
         f"Entry Zone   : "
-        f"{money(zone_low)}"
-        f" ~ "
-        f"{money(zone_high)}"
+        f"${zone_low:,.2f} ~ "
+        f"${zone_high:,.2f}"
     )
 
-    print(
-        f"Current      : "
-        f"{money(current_price)}"
-    )
-
-    print(
-        f"Distance     : "
-        f"{distance:.2f} ATR"
-    )
+    print(f"Current      : ${current_price:,.2f}")
+    print(f"Distance     : {distance_atr:.2f} ATR")
 
     # --------------------------------------------------------
-    # 너무 멀리 가면 취소
+    # Cancel if price runs too far
     # --------------------------------------------------------
 
-    if (
-        distance >
-        MAX_PENDING_DISTANCE_ATR
-    ):
+    if distance_atr > MAX_PENDING_DISTANCE_ATR:
 
-        print(
-            "Pending entry cancelled:"
+        print("")
+        print("Pending signal cancelled.")
+        print("가격이 진입 구간에서 너무 멀어졌습니다.")
+
+        message = (
+            "🥇 금 선물 스마트 시그널\n\n"
+            "⚪ 진입 대기 취소\n"
+            "━━━━━━━━━━━━━━━━━━\n\n"
+            f"📌 방향 : {'롱' if direction == 'LONG' else '숏'}\n"
+            f"💰 현재가 : ${current_price:,.2f}\n\n"
+            "가격이 진입 구간에서 너무 멀어져\n"
+            "기존 대기 신호를 취소했습니다."
         )
 
-        print(
-            "price moved too far."
-        )
+        send_telegram(message)
 
-        send_telegram(
-            pending_cancel_message(
-                state
-            )
-        )
-
-        append_log(
-            "PENDING_DISTANCE_CANCEL",
+        save_log(
+            "PENDING_CANCELLED_DISTANCE",
             {
                 "direction": direction,
-                "signal_price": signal_price,
-                "current_price": current_price,
-                "distance_atr": distance,
+                "current_price": current_price
             }
         )
 
         state.clear()
-
-        state.update(
-            default_state()
-        )
+        state.update(default_state())
 
         save_state(state)
 
-        return state
+        return
 
     # --------------------------------------------------------
-    # 진입 구간 도달
+    # Check entry zone
     # --------------------------------------------------------
 
     in_zone = (
-        zone_low
-        <= current_price
-        <= zone_high
+        zone_low <= current_price <= zone_high
     )
 
     if in_zone:
 
-        print()
-        print(
-            "ENTRY ZONE REACHED"
-        )
+        print("")
+        print("ENTRY ZONE REACHED")
+        print("실제 진입을 확정합니다.")
 
-        print(
-            "Actual entry confirmed."
-        )
-
-        state = activate_pending(
+        activate_pending(
             state,
-            df15,
-            current_price
+            current_price,
+            atr_value
         )
 
-        return state
+        return
 
-    print(
-        "Waiting for entry zone..."
-    )
-
-    return state
+    print("Waiting for entry zone...")
 
 
 # ============================================================
-# TP / SL
+# MONITOR ACTIVE
 # ============================================================
 
-def tp_message(
-    direction,
-    entry,
-    target,
-    level,
-    current
-):
+def monitor_active(state, data):
 
-    emoji = (
-        "🟢"
-        if direction == "LONG"
-        else "🔴"
+    m1 = data["1m"]
+
+    current_price = float(
+        m1["Close"].iloc[-1]
     )
 
-    return f"""
-<b>🥇 금 선물 알림</b>
+    direction = state["direction"]
 
-{emoji} <b>{level} 도달</b>
-━━━━━━━━━━━━━━━━━━
+    entry = float(state["entry"])
+    sl = float(state["sl"])
 
-방향 : {direction}
+    tp1 = float(state["tp1"])
+    tp2 = float(state["tp2"])
+    tp3 = float(state["tp3"])
 
-진입가 :
-{money(entry)}
+    print("")
+    print("====================================")
+    print(" ACTIVE POSITION")
+    print("====================================")
 
-목표가 :
-{money(target)}
+    print(f"Direction : {direction}")
+    print(f"Entry     : ${entry:,.2f}")
+    print(f"SL        : ${sl:,.2f}")
+    print(f"TP1       : ${tp1:,.2f}")
+    print(f"TP2       : ${tp2:,.2f}")
+    print(f"TP3       : ${tp3:,.2f}")
+    print(f"1M Close  : ${current_price:,.2f}")
 
-현재가 :
-{money(current)}
-
-━━━━━━━━━━━━━━━━━━
-"""
-
-
-def sl_message(
-    direction,
-    entry,
-    sl,
-    current
-):
-
-    return f"""
-<b>🥇 금 선물 알림</b>
-
-🔴 <b>손절 처리</b>
-━━━━━━━━━━━━━━━━━━
-
-방향 : {direction}
-
-진입가 :
-{money(entry)}
-
-손절가 :
-{money(sl)}
-
-청산가 :
-{money(current)}
-
-━━━━━━━━━━━━━━━━━━
-🛑 손절 처리 완료
-━━━━━━━━━━━━━━━━━━
-"""
-
-
-# ============================================================
-# ACTIVE POSITION 관리
-# ============================================================
-
-def monitor_active(
-    state,
-    df1m
-):
-
-    if (
-        state.get("status")
-        != "ACTIVE"
-    ):
-
-        return state
-
-    if (
-        df1m is None
-        or df1m.empty
-    ):
-
-        return state
-
-    current = float(
-        df1m.iloc[-1]["Close"]
-    )
-
-    direction = state[
-        "direction"
-    ]
-
-    entry = float(
-        state["entry"]
-    )
-
-    sl = float(
-        state["sl"]
-    )
-
-    tp1 = float(
-        state["tp1"]
-    )
-
-    tp2 = float(
-        state["tp2"]
-    )
-
-    tp3 = float(
-        state["tp3"]
-    )
-
-    print()
-    print(
-        "===================================="
-    )
-    print(
-        "ACTIVE POSITION"
-    )
-    print(
-        "===================================="
-    )
-
-    print(
-        f"Direction : {direction}"
-    )
-
-    print(
-        f"Entry     : {money(entry)}"
-    )
-
-    print(
-        f"SL        : {money(sl)}"
-    )
-
-    print(
-        f"TP1       : {money(tp1)}"
-    )
-
-    print(
-        f"TP2       : {money(tp2)}"
-    )
-
-    print(
-        f"TP3       : {money(tp3)}"
-    )
-
-    print(
-        f"1M Close  : {money(current)}"
-    )
-
-    # --------------------------------------------------------
+    # ========================================================
     # LONG
-    # --------------------------------------------------------
+    # ========================================================
 
     if direction == "LONG":
 
-        if current <= sl:
-
-            if send_telegram(
-                sl_message(
-                    direction,
-                    entry,
-                    sl,
-                    current
-                )
-            ):
-
-                state["status"] = "NONE"
-                state["sl_hit"] = True
-                state["last_alert"] = "SL"
-
-                save_state(state)
-
-                append_log(
-                    "STOP_LOSS",
-                    {
-                        "direction": direction,
-                        "entry": entry,
-                        "exit": current,
-                    }
-                )
-
-            return state
-
-        if (
-            not state.get("tp1_hit")
-            and current >= tp1
-        ):
-
-            if send_telegram(
-                tp_message(
-                    direction,
-                    entry,
-                    tp1,
-                    "TP1",
-                    current
-                )
-            ):
-
-                state["tp1_hit"] = True
-                state["last_alert"] = "TP1"
-
-                save_state(state)
-
-        if (
-            not state.get("tp2_hit")
-            and current >= tp2
-        ):
-
-            if send_telegram(
-                tp_message(
-                    direction,
-                    entry,
-                    tp2,
-                    "TP2",
-                    current
-                )
-            ):
-
-                state["tp2_hit"] = True
-                state["last_alert"] = "TP2"
-
-                save_state(state)
-
-        if (
-            not state.get("tp3_hit")
-            and current >= tp3
-        ):
-
-            if send_telegram(
-                tp_message(
-                    direction,
-                    entry,
-                    tp3,
-                    "TP3",
-                    current
-                )
-            ):
-
-                state["tp3_hit"] = True
-                state["status"] = "NONE"
-                state["last_alert"] = "TP3"
-
-                save_state(state)
-
-                append_log(
-                    "TP3_COMPLETE",
-                    {
-                        "direction": direction,
-                        "entry": entry,
-                        "exit": current,
-                    }
-                )
-
-    # --------------------------------------------------------
-    # SHORT
-    # --------------------------------------------------------
-
-    else:
-
-        if current >= sl:
-
-            if send_telegram(
-                sl_message(
-                    direction,
-                    entry,
-                    sl,
-                    current
-                )
-            ):
-
-                state["status"] = "NONE"
-                state["sl_hit"] = True
-                state["last_alert"] = "SL"
-
-                save_state(state)
-
-                append_log(
-                    "STOP_LOSS",
-                    {
-                        "direction": direction,
-                        "entry": entry,
-                        "exit": current,
-                    }
-                )
-
-            return state
-
-        if (
-            not state.get("tp1_hit")
-            and current <= tp1
-        ):
-
-            if send_telegram(
-                tp_message(
-                    direction,
-                    entry,
-                    tp1,
-                    "TP1",
-                    current
-                )
-            ):
-
-                state["tp1_hit"] = True
-                state["last_alert"] = "TP1"
-
-                save_state(state)
-
-        if (
-            not state.get("tp2_hit")
-            and current <= tp2
-        ):
-
-            if send_telegram(
-                tp_message(
-                    direction,
-                    entry,
-                    tp2,
-                    "TP2",
-                    current
-                )
-            ):
-
-                state["tp2_hit"] = True
-                state["last_alert"] = "TP2"
-
-                save_state(state)
-
-        if (
-            not state.get("tp3_hit")
-            and current <= tp3
-        ):
-
-            if send_telegram(
-                tp_message(
-                    direction,
-                    entry,
-                    tp3,
-                    "TP3",
-                    current
-                )
-            ):
-
-                state["tp3_hit"] = True
-                state["status"] = "NONE"
-                state["last_alert"] = "TP3"
-
-                save_state(state)
-
-                append_log(
-                    "TP3_COMPLETE",
-                    {
-                        "direction": direction,
-                        "entry": entry,
-                        "exit": current,
-                    }
-                )
-
-    return state
-
-
-# ============================================================
-# 메인
-# ============================================================
-
-def main():
-
-    print(
-        "================================="
-    )
-
-    print(
-        " 금 선물 스마트 시그널 봇"
-    )
-
-    print(
-        " BALANCED V11"
-    )
-
-    print(
-        " SIGNAL -> PENDING -> ACTIVE"
-    )
-
-    print(
-        " M15 LEAD + 5M SUPPORT"
-    )
-
-    print(
-        " H1 CONTEXT ONLY"
-    )
-
-    print(
-        " PULLBACK ENTRY"
-    )
-
-    print(
-        " TELEGRAM RECOVERY ENABLED"
-    )
-
-    print(
-        "================================="
-    )
-
-    state = load_state()
-
-    # --------------------------------------------------------
-    # V10 상태 변환
-    # --------------------------------------------------------
-
-    state = migrate_old_active_state(
-        state
-    )
-
-    # --------------------------------------------------------
-    # 데이터
-    # --------------------------------------------------------
-
-    data = download_data()
-
-    df1h = data.get("1h")
-    df15 = data.get("15m")
-    df5 = data.get("5m")
-    df1m = data.get("1m")
-
-    if (
-        df1h is None
-        or df15 is None
-        or df5 is None
-        or df1m is None
-    ):
-
-        print(
-            "Required market data unavailable."
-        )
-
-        return
-
-    df1h = prepare(df1h)
-    df15 = prepare(df15)
-    df5 = prepare(df5)
-    df1m = prepare(df1m)
-
-    if (
-        len(df1h) < 60
-        or len(df15) < 60
-        or len(df5) < 60
-    ):
-
-        print(
-            "Not enough candles."
-        )
-
-        return
-
-    # ========================================================
-    # PENDING 상태
-    # ========================================================
-
-    if (
-        state.get("status")
-        == "PENDING"
-    ):
-
-        state = monitor_pending(
-            state,
-            df15,
-            df1m
-        )
-
-        save_state(state)
-
-        if (
-            state.get("status")
-            == "ACTIVE"
-        ):
-
-            print(
-                "Actual position is now active."
+        # ----------------------------------------------------
+        # Stop Loss
+        # ----------------------------------------------------
+
+        if current_price <= sl:
+
+            message = (
+                "🥇 금 선물 스마트 시그널\n\n"
+                "🔴 손절 처리\n"
+                "━━━━━━━━━━━━━━━━━━\n\n"
+                f"💰 진입가 : ${entry:,.2f}\n"
+                f"🛑 청산가 : ${current_price:,.2f}\n"
+                f"📉 손익률 : "
+                f"{((current_price - entry) / entry) * 100:.2f}%\n\n"
+                "━━━━━━━━━━━━━━━━━━\n"
+                "🛑 손절 처리 완료"
             )
 
-        else:
+            send_telegram(message)
 
-            print(
-                "Still waiting for entry."
+            save_log(
+                "STOP_LOSS",
+                {
+                    "direction": direction,
+                    "entry": entry,
+                    "exit": current_price
+                }
             )
 
-        return
+            state.clear()
+            state.update(default_state())
 
-    # ========================================================
-    # ACTIVE 상태
-    # ========================================================
+            save_state(state)
 
-    if (
-        state.get("status")
-        == "ACTIVE"
-    ):
+            return
 
-        state = monitor_active(
-            state,
-            df1m
-        )
+        # ----------------------------------------------------
+        # TP1
+        # ----------------------------------------------------
 
-        save_state(state)
+        if not state["tp1_hit"] and current_price >= tp1:
 
-        if (
-            state.get("status")
-            == "ACTIVE"
-        ):
-
-            print(
-                "Active position remains open."
+            message = (
+                "🥇 금 선물 스마트 시그널\n\n"
+                "🔵 익절 1 도달\n"
+                "━━━━━━━━━━━━━━━━━━\n\n"
+                f"💰 진입가 : ${entry:,.2f}\n"
+                f"🎯 익절가 : ${current_price:,.2f}\n\n"
+                "익절 1 도달"
             )
 
-        return
+            send_telegram(message)
 
-    # ========================================================
-    # CURRENT MARKET
-    # ========================================================
+            state["tp1_hit"] = True
 
-    row = df15.iloc[-1]
+            save_state(state)
 
-    close = float(
-        row["Close"]
-    )
+        # ----------------------------------------------------
+        # TP2
+        # ----------------------------------------------------
 
-    e20 = float(
-        row["EMA20"]
-    )
+        if not state["tp2_hit"] and current_price >= tp2:
 
-    e50 = float(
-        row["EMA50"]
-    )
-
-    r = float(
-        row["RSI"]
-    )
-
-    a = float(
-        row["ADX"]
-    )
-
-    atr_value = float(
-        row["ATR"]
-    )
-
-    print()
-    print(
-        "===================================="
-    )
-
-    print(
-        " CURRENT MARKET CHECK"
-    )
-
-    print(
-        "===================================="
-    )
-
-    print(
-        f"M15 Close : {money(close)}"
-    )
-
-    print(
-        f"EMA20     : {money(e20)}"
-    )
-
-    print(
-        f"EMA50     : {money(e50)}"
-    )
-
-    print(
-        f"RSI       : {r:.2f}"
-    )
-
-    print(
-        f"ADX       : {a:.2f}"
-    )
-
-    print(
-        f"ATR       : {atr_value:.2f}"
-    )
-
-    # ========================================================
-    # SCORE
-    # ========================================================
-
-    m15_long, m15_short = (
-        m15_score(df15)
-    )
-
-    m5_long, m5_short = (
-        m5_score(df5)
-    )
-
-    h1_bull, h1_bear = (
-        h1_context(df1h)
-    )
-
-    print()
-    print(
-        "===================================="
-    )
-
-    print(
-        " LONG CHECK"
-    )
-
-    print(
-        "===================================="
-    )
-
-    print(
-        f"M15 Score : {m15_long}/6"
-    )
-
-    print(
-        f"5M Score  : {m5_long}/3"
-    )
-
-    print(
-        "H1        : "
-        +
-        (
-            "BULL"
-            if h1_bull
-            else "NOT BULL"
-        )
-    )
-
-    print()
-    print(
-        "===================================="
-    )
-
-    print(
-        " SHORT CHECK"
-    )
-
-    print(
-        "===================================="
-    )
-
-    print(
-        f"M15 Score : {m15_short}/6"
-    )
-
-    print(
-        f"5M Score  : {m5_short}/3"
-    )
-
-    print(
-        "H1        : "
-        +
-        (
-            "BEAR"
-            if h1_bear
-            else "NOT BEAR"
-        )
-    )
-
-    # ========================================================
-    # FILTER
-    # ========================================================
-
-    distance = distance_from_ema(
-        df15
-    )
-
-    move = recent_move_atr(
-        df15
-    )
-
-    candle = candle_strength(
-        df15
-    )
-
-    print()
-    print(
-        "===================================="
-    )
-
-    print(
-        " FILTER"
-    )
-
-    print(
-        "===================================="
-    )
-
-    print(
-        f"Distance : "
-        f"{distance:.2f} ATR"
-    )
-
-    print(
-        f"Move     : "
-        f"{move:.2f} ATR"
-    )
-
-    print(
-        f"Candle   : "
-        f"{candle:.2f}"
-    )
-
-    # ========================================================
-    # COOLDOWN
-    # ========================================================
-
-    if not cooldown_ok(state):
-
-        print()
-        print(
-            "Cooldown active."
-        )
-
-        return
-
-    # ========================================================
-    # LONG 후보
-    # ========================================================
-
-    long_valid = False
-
-    if m15_long >= MIN_M15_SCORE:
-
-        # 5M이 완전히 반대면 제외
-        if m5_short < 3:
-
-            normal_long = (
-                distance <= 2.00
-                and move <= 1.35
-                and candle >= 0.18
-                and m5_long >= 1
+            message = (
+                "🥇 금 선물 스마트 시그널\n\n"
+                "🔵 익절 2 도달\n"
+                "━━━━━━━━━━━━━━━━━━\n\n"
+                f"💰 진입가 : ${entry:,.2f}\n"
+                f"🎯 익절가 : ${current_price:,.2f}\n\n"
+                "익절 2 도달"
             )
 
-            strong_long = (
-                m15_long >= 5
-                and m5_long >= 2
-                and distance <= 2.20
-                and move <= 1.35
+            send_telegram(message)
+
+            state["tp2_hit"] = True
+
+            save_state(state)
+
+        # ----------------------------------------------------
+        # TP3
+        # ----------------------------------------------------
+
+        if not state["tp3_hit"] and current_price >= tp3:
+
+            message = (
+                "🥇 금 선물 스마트 시그널\n\n"
+                "🔵 익절 3 도달\n"
+                "━━━━━━━━━━━━━━━━━━\n\n"
+                f"💰 진입가 : ${entry:,.2f}\n"
+                f"🎯 최종 청산가 : ${current_price:,.2f}\n\n"
+                "━━━━━━━━━━━━━━━━━━\n"
+                "✅ 거래 종료"
             )
 
-            early_long = (
-                m15_long >= 4
-                and m5_long >= 2
-                and a >= 20
-                and r >= 55
-                and r <= 70
-                and distance <= 2.20
-                and move <= 1.35
+            send_telegram(message)
+
+            save_log(
+                "TP3_COMPLETE",
+                {
+                    "direction": direction,
+                    "entry": entry,
+                    "exit": current_price
+                }
             )
 
-            if (
-                normal_long
-                or strong_long
-                or early_long
-            ):
+            state.clear()
+            state.update(default_state())
 
-                long_valid = True
-
-    # ========================================================
-    # SHORT 후보
-    # ========================================================
-
-    short_valid = False
-
-    if m15_short >= MIN_M15_SCORE:
-
-        if m5_long < 3:
-
-            normal_short = (
-                distance <= 2.00
-                and move <= 1.35
-                and candle >= 0.18
-                and m5_short >= 1
-            )
-
-            strong_short = (
-                m15_short >= 5
-                and m5_short >= 2
-                and distance <= 2.20
-                and move <= 1.35
-            )
-
-            early_short = (
-                m15_short >= 4
-                and m5_short >= 2
-                and a >= 20
-                and r >= 30
-                and r <= 45
-                and distance <= 2.20
-                and move <= 1.35
-            )
-
-            if (
-                normal_short
-                or strong_short
-                or early_short
-            ):
-
-                short_valid = True
-
-    # ========================================================
-    # 양쪽 동시에 발생
-    # ========================================================
-
-    if (
-        long_valid
-        and short_valid
-    ):
-
-        if m15_long > m15_short:
-
-            short_valid = False
-
-        elif m15_short > m15_long:
-
-            long_valid = False
-
-        else:
-
-            print(
-                "Both directions equal."
-            )
+            save_state(state)
 
             return
 
     # ========================================================
-    # LONG PENDING
+    # SHORT
     # ========================================================
 
-    if long_valid:
+    else:
 
-        print()
-        print(
-            "===================================="
-        )
+        # ----------------------------------------------------
+        # Stop Loss
+        # ----------------------------------------------------
 
-        print(
-            "LONG SIGNAL"
-        )
+        if current_price >= sl:
 
-        print(
-            "===================================="
-        )
+            message = (
+                "🥇 금 선물 스마트 시그널\n\n"
+                "🔴 손절 처리\n"
+                "━━━━━━━━━━━━━━━━━━\n\n"
+                f"💰 진입가 : ${entry:,.2f}\n"
+                f"🛑 청산가 : ${current_price:,.2f}\n"
+                f"📉 손익률 : "
+                f"{((entry - current_price) / entry) * 100:.2f}%\n\n"
+                "━━━━━━━━━━━━━━━━━━\n"
+                "🛑 손절 처리 완료"
+            )
 
-        print(
-            "신호 발생."
-        )
+            send_telegram(message)
 
-        print(
-            "바로 ACTIVE가 되지 않습니다."
-        )
+            save_log(
+                "STOP_LOSS",
+                {
+                    "direction": direction,
+                    "entry": entry,
+                    "exit": current_price
+                }
+            )
 
-        print(
-            "진입 구간을 기다립니다."
-        )
+            state.clear()
+            state.update(default_state())
 
-        create_pending(
+            save_state(state)
+
+            return
+
+        # ----------------------------------------------------
+        # TP1
+        # ----------------------------------------------------
+
+        if not state["tp1_hit"] and current_price <= tp1:
+
+            message = (
+                "🥇 금 선물 스마트 시그널\n\n"
+                "🔵 익절 1 도달\n"
+                "━━━━━━━━━━━━━━━━━━\n\n"
+                f"💰 진입가 : ${entry:,.2f}\n"
+                f"🎯 익절가 : ${current_price:,.2f}\n\n"
+                "익절 1 도달"
+            )
+
+            send_telegram(message)
+
+            state["tp1_hit"] = True
+
+            save_state(state)
+
+        # ----------------------------------------------------
+        # TP2
+        # ----------------------------------------------------
+
+        if not state["tp2_hit"] and current_price <= tp2:
+
+            message = (
+                "🥇 금 선물 스마트 시그널\n\n"
+                "🔵 익절 2 도달\n"
+                "━━━━━━━━━━━━━━━━━━\n\n"
+                f"💰 진입가 : ${entry:,.2f}\n"
+                f"🎯 익절가 : ${current_price:,.2f}\n\n"
+                "익절 2 도달"
+            )
+
+            send_telegram(message)
+
+            state["tp2_hit"] = True
+
+            save_state(state)
+
+        # ----------------------------------------------------
+        # TP3
+        # ----------------------------------------------------
+
+        if not state["tp3_hit"] and current_price <= tp3:
+
+            message = (
+                "🥇 금 선물 스마트 시그널\n\n"
+                "🔵 익절 3 도달\n"
+                "━━━━━━━━━━━━━━━━━━\n\n"
+                f"💰 진입가 : ${entry:,.2f}\n"
+                f"🎯 최종 청산가 : ${current_price:,.2f}\n\n"
+                "━━━━━━━━━━━━━━━━━━\n"
+                "✅ 거래 종료"
+            )
+
+            send_telegram(message)
+
+            save_log(
+                "TP3_COMPLETE",
+                {
+                    "direction": direction,
+                    "entry": entry,
+                    "exit": current_price
+                }
+            )
+
+            state.clear()
+            state.update(default_state())
+
+            save_state(state)
+
+            return
+
+    print("")
+    print("Active position remains open.")
+
+
+# ============================================================
+# MAIN
+# ============================================================
+
+def main():
+
+    state = load_state()
+
+    data = download_data()
+
+    required = [
+        "1h",
+        "15m",
+        "5m",
+        "1m"
+    ]
+
+    for key in required:
+
+        if key not in data:
+
+            print("")
+            print(f"Missing market data: {key}")
+            return
+
+    # ========================================================
+    # ACTIVE
+    # ========================================================
+
+    if state["status"] == "ACTIVE":
+
+        monitor_active(
             state,
-            "LONG",
-            df15,
-            m15_long,
-            m15_short,
-            m5_long,
-            m5_short
+            data
         )
 
         return
 
     # ========================================================
-    # SHORT PENDING
+    # PENDING
     # ========================================================
 
-    if short_valid:
+    if state["status"] == "PENDING":
 
-        print()
-        print(
-            "===================================="
-        )
-
-        print(
-            "SHORT SIGNAL"
-        )
-
-        print(
-            "===================================="
-        )
-
-        print(
-            "신호 발생."
-        )
-
-        print(
-            "바로 ACTIVE가 되지 않습니다."
-        )
-
-        print(
-            "진입 구간을 기다립니다."
-        )
-
-        create_pending(
+        monitor_pending(
             state,
-            "SHORT",
-            df15,
-            m15_long,
-            m15_short,
-            m5_long,
-            m5_short
+            data
         )
 
         return
 
     # ========================================================
-    # NO SIGNAL
+    # NEW MARKET ANALYSIS
     # ========================================================
 
-    print()
-    print(
-        "===================================="
+    analysis = analyze_market(data)
+
+    direction = analysis["direction"]
+
+    if direction is None:
+
+        print("")
+        print("====================================")
+        print(" NO VALID SIGNAL")
+        print("====================================")
+
+        save_log(
+            "NO_SIGNAL",
+            {
+                "long_score": analysis["long_score"],
+                "short_score": analysis["short_score"]
+            }
+        )
+
+        return
+
+    # ========================================================
+    # CREATE NEW PENDING
+    # ========================================================
+
+    print("")
+    print("====================================")
+    print(" FRESH SIGNAL FOUND")
+    print("====================================")
+
+    print(f"Direction : {direction}")
+
+    create_pending(
+        state,
+        analysis
     )
 
-    print(
-        "NO VALID SIGNAL"
-    )
+    # ========================================================
+    # IMPORTANT
+    #
+    # After creating a fresh pending signal, check whether
+    # current price is already inside the entry zone.
+    #
+    # This prevents unnecessary waiting when the signal
+    # happens at the current market price.
+    # ========================================================
 
-    print(
-        "===================================="
+    monitor_pending(
+        state,
+        data
     )
 
 
@@ -2920,24 +1553,14 @@ if __name__ == "__main__":
 
     except Exception as e:
 
-        print()
-        print(
-            "===================================="
-        )
+        print("")
+        print("====================================")
+        print(" BOT ERROR")
+        print("====================================")
 
-        print(
-            "BOT ERROR"
-        )
+        print(str(e))
 
-        print(
-            "===================================="
-        )
-
-        print(
-            str(e)
-        )
-
-        append_log(
+        save_log(
             "BOT_ERROR",
             {
                 "error": str(e)
