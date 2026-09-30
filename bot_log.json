@@ -204,5 +204,12 @@
       "zone_low": 4211.97473255175,
       "zone_high": 4214.016683188584
     }
+  },
+  {
+    "time": "2026-09-30 01:33:05 UTC",
+    "event": "PENDING_TIMEOUT",
+    "data": {
+      "direction": "LONG"
+    }
   }
 ]
