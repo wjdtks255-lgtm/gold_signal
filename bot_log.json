@@ -383,5 +383,36 @@
     "tp1": 4213.04,
     "tp2": 4208.73,
     "tp3": 4203.35
+  },
+  {
+    "time": "2026-09-30T21:57:41.231833+09:00",
+    "version": "14.0.0",
+    "event": "SL_HIT",
+    "price": 4239.60009765625,
+    "status": "ACTIVE",
+    "direction": "SHORT",
+    "entry": 4219.5,
+    "sl": 4224.88,
+    "tp1": 4213.04,
+    "tp2": 4208.73,
+    "tp3": 4203.35
+  },
+  {
+    "time": "2026-09-30T21:57:41.232650+09:00",
+    "version": "14.0.0",
+    "event": "EXIT",
+    "price": 4239.60009765625,
+    "status": "IDLE",
+    "direction": null,
+    "entry": null,
+    "sl": null,
+    "tp1": null,
+    "tp2": null,
+    "tp3": null,
+    "extra": {
+      "reason": "SL",
+      "old_direction": "SHORT",
+      "old_entry": 4219.5
+    }
   }
 ]
