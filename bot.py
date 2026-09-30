@@ -8,11 +8,11 @@ import requests
 import yfinance as yf
 
 # ============================================================
-# GOLD FUTURES SMART SIGNAL BOT (HIGH ACCURACY INSTANT VERSION)
-# V12.1 - STRICT DIRECTION FILTER & IMMEDIATE EXECUTION
+# GOLD FUTURES SMART SIGNAL BOT (ANTI-WHIPSAW VERSION)
+# V12.2 - SL PENALTY COOLDOWN & STRICT DIRECTION FILTER
 # ============================================================
 
-VERSION = "12.1.0"
+VERSION = "12.2.0"
 STATE_VERSION = VERSION
 TICKER = "GC=F"
 TV_LINK = "https://www.tradingview.com/symbols/GC1!/"
@@ -23,11 +23,11 @@ TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 STATE_FILE = "signal_state.json"
 LOG_FILE = "bot_log.json"
 
-# 방향 정확도를 높이기 위한 엄격한 점수 기준
-MIN_M15_SCORE = 5        # 기준 점수를 높여 확실한 추세만 포착
-STRONG_M15_SCORE = 6     # 완벽한 정배열/역배열 조건
-MIN_ADX = 15.0           # 횡보장 노이즈 필터링 강화
-COOLDOWN_MINUTES = 45    # 뇌동매매 방지 쿨다운
+MIN_M15_SCORE = 5        
+STRONG_M15_SCORE = 6     
+MIN_ADX = 15.0           
+COOLDOWN_MINUTES = 45    
+SL_COOLDOWN_MINUTES = 120  # 🛑 손절 맞은 방향은 2시간 동안 재진입 금지!
 
 ENTRY_RISK_ATR = 1.35
 MIN_RISK_ATR = 0.55
@@ -136,7 +136,7 @@ RSI            : {rsi_value:.2f}
 ADX (추세강도) : {adx_value:.2f}
 
 ━━━━━━━━━━━━━━━━━━━━
-⚙️ 전략 : 고강도 추세 필터 + 즉시 추세 추종
+⚙️ 전략 : 방어적 쿨다운 + 즉시 추세 추종
 🔴 현재 포지션 실시간 관리 중
 
 {chart_link_html()}"""
@@ -189,7 +189,7 @@ def msg_sl(direction, entry, price, pnl_pct):
 📉 손익률   : <b>{pnl_pct:+.2f}%</b>
 
 ━━━━━━━━━━━━━━━━━━━━
-🛑 손절 처리 완료. 새로운 정밀 신호를 탐색합니다.
+🛑 손절 처리 완료. 동일 방향 휩소 방지를 위해 2시간 동안 재진입을 잠금니다.
 
 {chart_link_html()}"""
 
@@ -313,23 +313,17 @@ def analyze_market(df):
     long_score = 0
     short_score = 0
 
-    # 1. 추세 방향성 체크 (엄격한 조건)
     if c > e20: long_score += 1
     if c < e20: short_score += 1
     if e20 > e50: long_score += 1
     if e20 < e50: short_score += 1
     if e20 > prev_e20: long_score += 1
     if e20 < prev_e20: short_score += 1
-
-    # 2. RSI 모멘텀 필터 (중립 구간 노이즈 배제)
     if rr >= 50: long_score += 1
     if rr <= 50: short_score += 1
-
-    # 3. 가격 모멘텀 연속성
     if c > prev_c: long_score += 1
     if c < prev_c: short_score += 1
 
-    # 4. ADX 추세 강도 가산점
     if dd >= MIN_ADX:
         if long_score > short_score: long_score += 1
         elif short_score > long_score: short_score += 1
@@ -395,6 +389,8 @@ def default_state():
         "sl_sent": False,
         "last_signal_time": None,
         "last_signal_direction": None,
+        "last_sl_time": None,         # 손절 발생 시간 추적
+        "last_sl_direction": None,    # 손절 발생 방향 추적
     }
 
 
@@ -406,25 +402,53 @@ def load_state():
     return state
 
 
-def reset_state(state):
-    last_time = state.get("last_signal_time")
-    last_dir = state.get("last_signal_direction")
+def reset_state_on_sl(state, direction):
+    # 손절 시 기록을 남겨서 동일 방향 재진입을 막음
     new_state = default_state()
-    new_state["last_signal_time"] = last_time
-    new_state["last_signal_direction"] = last_dir
+    new_state["last_signal_time"] = state.get("last_signal_time")
+    new_state["last_signal_direction"] = state.get("last_signal_direction")
+    new_state["last_sl_time"] = now_utc().isoformat()
+    new_state["last_sl_direction"] = direction
+    save_json(STATE_FILE, new_state)
+    return new_state
+
+
+def reset_state_normal(state):
+    new_state = default_state()
+    new_state["last_signal_time"] = state.get("last_signal_time")
+    new_state["last_signal_direction"] = state.get("last_signal_direction")
+    new_state["last_sl_time"] = state.get("last_sl_time")
+    new_state["last_sl_direction"] = state.get("last_sl_direction")
     save_json(STATE_FILE, new_state)
     return new_state
 
 
 def signal_allowed(state, direction):
+    # 1. 일반 쿨다운 체크
     last_time = state.get("last_signal_time")
-    if not last_time: return True
-    try:
-        last_dt = datetime.fromisoformat(last_time)
-        elapsed = (now_utc() - last_dt).total_seconds() / 60
-        return elapsed >= COOLDOWN_MINUTES
-    except Exception:
-        return True
+    if last_time:
+        try:
+            last_dt = datetime.fromisoformat(last_time)
+            elapsed = (now_utc() - last_dt).total_seconds() / 60
+            if elapsed < COOLDOWN_MINUTES:
+                return False
+        except Exception:
+            pass
+
+    # 2. 🛑 손절 직후 동일 방향 재진입 락(Lock) 체크
+    last_sl_time = state.get("last_sl_time")
+    last_sl_dir = state.get("last_sl_direction")
+    if last_sl_time and last_sl_dir == direction:
+        try:
+            sl_dt = datetime.fromisoformat(last_sl_time)
+            sl_elapsed = (now_utc() - sl_dt).total_seconds() / 60
+            if sl_elapsed < SL_COOLDOWN_MINUTES:
+                print(f"SL Lock active for {direction}. Elapsed: {sl_elapsed:.1f}m / {SL_COOLDOWN_MINUTES}m")
+                return False
+        except Exception:
+            pass
+
+    return True
 
 
 def find_new_signal(m15, five):
@@ -432,7 +456,6 @@ def find_new_signal(m15, five):
     long_score = m15["long_score"]
     short_score = m15["short_score"]
 
-    # 엄격한 점수 조건 통과 여부 확인
     long_valid = long_score >= STRONG_M15_SCORE or (long_score >= MIN_M15_SCORE and five["long_score"] >= 2)
     short_valid = short_score >= STRONG_M15_SCORE or (short_score >= MIN_M15_SCORE and five["short_score"] >= 2)
 
@@ -508,7 +531,7 @@ def monitor_active(state, current_price):
             pnl = (current_price - entry) / entry * 100 if direction == "LONG" else (entry - current_price) / entry * 100
             telegram_send(msg_sl(direction, entry, current_price, pnl))
             log_event("STOP_LOSS", {"exit": current_price, "pnl_pct": pnl})
-            reset_state(state)
+            reset_state_on_sl(state, direction)  # 손절 전용 초기화 (재진입 방지 락 걸기)
             return
 
     if not state.get("tp3_sent"):
@@ -516,7 +539,7 @@ def monitor_active(state, current_price):
         if hit_tp3:
             telegram_send(msg_tp3(direction, current_price))
             log_event("TP3", {"price": current_price})
-            reset_state(state)
+            reset_state_normal(state)
             return
 
     if not state.get("tp2_sent"):
@@ -542,7 +565,7 @@ def monitor_active(state, current_price):
 
 def main():
     print("====================================")
-    print(" GOLD SMART SIGNAL (HIGH ACCURACY)")
+    print(" GOLD SMART SIGNAL (ANTI-WHIPSAW)")
     print(f" V{VERSION}")
     print("====================================\n")
 
@@ -581,10 +604,10 @@ def main():
         return
 
     if not signal_allowed(state, direction):
-        print("Cooldown active. Skipping signal.")
+        print("Signal blocked by Cooldown or SL Lock.")
         return
 
-    print(f"HIGH ACCURACY SIGNAL FOUND: {direction} -> Executing Immediately!")
+    print(f"VALID SIGNAL FOUND: {direction} -> Executing Immediately!")
     execute_immediate_entry(state, direction, m15, five)
 
 
