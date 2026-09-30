@@ -1,11 +1,11 @@
 {
   "version": "11.2.3",
-  "status": "FLAT",
-  "direction": null,
-  "signal_price": null,
-  "zone_low": null,
-  "zone_high": null,
-  "signal_time": null,
+  "status": "PENDING",
+  "direction": "LONG",
+  "signal_price": 4214.60009765625,
+  "zone_low": 4211.97473255175,
+  "zone_high": 4214.016683188584,
+  "signal_time": "2026-09-30T00:46:32.112172+00:00",
   "pullback_notified": false,
   "entry": null,
   "sl": null,
@@ -17,6 +17,6 @@
   "tp3_sent": false,
   "sl_sent": false,
   "entry_time": null,
-  "last_signal_time": null,
-  "last_signal_direction": null
+  "last_signal_time": "2026-09-30T00:46:32.112186+00:00",
+  "last_signal_direction": "LONG"
 }
