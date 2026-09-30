@@ -8,11 +8,11 @@ import requests
 import yfinance as yf
 
 # ============================================================
-# GOLD FUTURES SMART SIGNAL BOT (ANTI-WHIPSAW VERSION)
-# V12.2 - SL PENALTY COOLDOWN & STRICT DIRECTION FILTER
+# GOLD FUTURES SMART SIGNAL BOT (ULTIMATE ROBUST VERSION)
+# V13.0 - REALTIME PRICE ANCHORING & EDGE-CASE HARDENING
 # ============================================================
 
-VERSION = "12.2.0"
+VERSION = "13.0.0"
 STATE_VERSION = VERSION
 TICKER = "GC=F"
 TV_LINK = "https://www.tradingview.com/symbols/GC1!/"
@@ -27,7 +27,7 @@ MIN_M15_SCORE = 5
 STRONG_M15_SCORE = 6     
 MIN_ADX = 15.0           
 COOLDOWN_MINUTES = 45    
-SL_COOLDOWN_MINUTES = 120  # 🛑 손절 맞은 방향은 2시간 동안 재진입 금지!
+SL_COOLDOWN_MINUTES = 120  # 손절 후 동일 방향 재진입 차단 (2시간)
 
 ENTRY_RISK_ATR = 1.35
 MIN_RISK_ATR = 0.55
@@ -47,7 +47,10 @@ def now_text():
 
 
 def fmt_price(v):
-    return f"${float(v):,.2f}"
+    try:
+        return f"${float(v):,.2f}"
+    except Exception:
+        return "$0.00"
 
 
 def load_json(path, default):
@@ -55,28 +58,35 @@ def load_json(path, default):
         if not os.path.exists(path):
             return default
         with open(path, "r", encoding="utf-8") as f:
-            return json.load(f)
+            data = json.load(f)
+            return data if isinstance(data, type(default)) else default
     except Exception:
         return default
 
 
 def save_json(path, data):
-    tmp = path + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
-    os.replace(tmp, path)
+    try:
+        tmp = path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+        os.replace(tmp, path)
+    except Exception as e:
+        print(f"Save JSON error: {e}")
 
 
 def log_event(event, data=None):
-    logs = load_json(LOG_FILE, [])
-    if not isinstance(logs, list):
-        logs = []
-    logs.append({
-        "time": now_text(),
-        "event": event,
-        "data": data or {}
-    })
-    save_json(LOG_FILE, logs[-500:])
+    try:
+        logs = load_json(LOG_FILE, [])
+        if not isinstance(logs, list):
+            logs = []
+        logs.append({
+            "time": now_text(),
+            "event": event,
+            "data": data or {}
+        })
+        save_json(LOG_FILE, logs[-500:])
+    except Exception as e:
+        print(f"Log event error: {e}")
 
 
 # ============================================================
@@ -113,14 +123,14 @@ def chart_link_html():
 
 def msg_entry(direction, entry, sl, tp1, tp2, tp3, m15_score, five_score, rsi_value, adx_value):
     d = "롱" if direction == "LONG" else "숏"
-    return f"""🥇 <b>금 선물 스마트 시그널 (정밀 추세 포착)</b>
+    return f"""🥇 <b>금 선물 스마트 시그널 (실시간 앵커링 V13)</b>
 ━━━━━━━━━━━━━━━━━━━━
 
 🔴 <b>{d} 포지션 즉시 실행</b>
 
 ━━━━━━━━━━━━━━━━━━━━
-💰 <b>진입가 (현재가)</b> : <b>{fmt_price(entry)}</b>
-🛑 <b>손절가 (SL)</b>      : <b>{fmt_price(sl)}</b>
+💰 <b>진입가 (실시간현재가)</b> : <b>{fmt_price(entry)}</b>
+🛑 <b>손절가 (SL)</b>          : <b>{fmt_price(sl)}</b>
 
 🎯 <b>익절 목표 (TP)</b>
 ① TP1   {fmt_price(tp1)}
@@ -130,13 +140,13 @@ def msg_entry(direction, entry, sl, tp1, tp2, tp3, m15_score, five_score, rsi_va
 ━━━━━━━━━━━━━━━━━━━━
 📊 <b>정밀 분석 리포트</b>
 
-M15 신호 점수  : {m15_score} / 6 (엄격 필터 적용)
+M15 신호 점수  : {m15_score} / 6
 5M 확인 점수   : {five_score} / 3
 RSI            : {rsi_value:.2f}
 ADX (추세강도) : {adx_value:.2f}
 
 ━━━━━━━━━━━━━━━━━━━━
-⚙️ 전략 : 방어적 쿨다운 + 즉시 추세 추종
+⚙️ 전략 : 실시간 앵커링 + 휩소 방어 가드
 🔴 현재 포지션 실시간 관리 중
 
 {chart_link_html()}"""
@@ -189,13 +199,13 @@ def msg_sl(direction, entry, price, pnl_pct):
 📉 손익률   : <b>{pnl_pct:+.2f}%</b>
 
 ━━━━━━━━━━━━━━━━━━━━
-🛑 손절 처리 완료. 동일 방향 휩소 방지를 위해 2시간 동안 재진입을 잠금니다.
+🛑 손절 처리 완료. 동일 방향 휩소 방지를 위해 2시간 동안 재진입이 제한됩니다.
 
 {chart_link_html()}"""
 
 
 # ============================================================
-# MARKET DATA
+# MARKET DATA & INDICATORS
 # ============================================================
 
 def download_data(interval, period):
@@ -232,10 +242,6 @@ def completed(df):
         return None
     return df.iloc[:-1].copy()
 
-
-# ============================================================
-# INDICATORS
-# ============================================================
 
 def ema(series, length):
     return series.ewm(span=length, adjust=False).mean()
@@ -287,16 +293,16 @@ def adx(df, length=14):
 
 
 def analyze_market(df):
-    df = completed(df)
-    if df is None or len(df) < 100:
+    df_comp = completed(df)
+    if df_comp is None or len(df_comp) < 100:
         return None
 
-    close = df["Close"]
+    close = df_comp["Close"]
     ema20 = ema(close, 20)
     ema50 = ema(close, 50)
     r = rsi(close, 14)
-    a = atr(df, 14)
-    d = adx(df, 14)
+    a = atr(df_comp, 14)
+    d = adx(df_comp, 14)
 
     c = float(close.iloc[-1])
     prev_c = float(close.iloc[-2])
@@ -337,14 +343,14 @@ def analyze_market(df):
 
 
 def analyze_5m(df):
-    df = completed(df)
-    if df is None or len(df) < 60:
+    df_comp = completed(df)
+    if df_comp is None or len(df_comp) < 60:
         return None
 
-    close = df["Close"]
+    close = df_comp["Close"]
     e20 = ema(close, 20)
     r = rsi(close, 14)
-    a = atr(df, 14)
+    a = atr(df_comp, 14)
 
     c = float(close.iloc[-1])
     prev = float(close.iloc[-2])
@@ -370,7 +376,7 @@ def analyze_5m(df):
 
 
 # ============================================================
-# STATE
+# STATE MANAGEMENT
 # ============================================================
 
 def default_state():
@@ -389,8 +395,8 @@ def default_state():
         "sl_sent": False,
         "last_signal_time": None,
         "last_signal_direction": None,
-        "last_sl_time": None,         # 손절 발생 시간 추적
-        "last_sl_direction": None,    # 손절 발생 방향 추적
+        "last_sl_time": None,
+        "last_sl_direction": None,
     }
 
 
@@ -403,7 +409,6 @@ def load_state():
 
 
 def reset_state_on_sl(state, direction):
-    # 손절 시 기록을 남겨서 동일 방향 재진입을 막음
     new_state = default_state()
     new_state["last_signal_time"] = state.get("last_signal_time")
     new_state["last_signal_direction"] = state.get("last_signal_direction")
@@ -424,7 +429,6 @@ def reset_state_normal(state):
 
 
 def signal_allowed(state, direction):
-    # 1. 일반 쿨다운 체크
     last_time = state.get("last_signal_time")
     if last_time:
         try:
@@ -435,7 +439,6 @@ def signal_allowed(state, direction):
         except Exception:
             pass
 
-    # 2. 🛑 손절 직후 동일 방향 재진입 락(Lock) 체크
     last_sl_time = state.get("last_sl_time")
     last_sl_dir = state.get("last_sl_direction")
     if last_sl_time and last_sl_dir == direction:
@@ -470,11 +473,12 @@ def find_new_signal(m15, five):
 
 
 # ============================================================
-# ACTIVE EXECUTION (IMMEDIATE ENTRY)
+# ACTIVE EXECUTION (REALTIME PRICE ANCHORING)
 # ============================================================
 
-def execute_immediate_entry(state, direction, market, five):
-    entry = market["close"]
+def execute_immediate_entry(state, direction, market, five, current_price):
+    # 🎯 실시간 현재가(Current Price)를 진입가로 직접 앵커링
+    entry = float(current_price)
     risk = max(five["atr"] * MIN_RISK_ATR, min(five["atr"] * ENTRY_RISK_ATR, five["atr"] * MAX_RISK_ATR))
 
     if direction == "LONG":
@@ -525,15 +529,17 @@ def monitor_active(state, current_price):
     tp2 = float(state["tp2"])
     tp3 = float(state["tp3"])
 
+    # 🛑 1. 손절(SL) 여부 최우선 검증 (슬리피지 및 갭 하락 대비)
     if not state.get("sl_sent"):
         hit_sl = current_price <= sl if direction == "LONG" else current_price >= sl
         if hit_sl:
             pnl = (current_price - entry) / entry * 100 if direction == "LONG" else (entry - current_price) / entry * 100
             telegram_send(msg_sl(direction, entry, current_price, pnl))
             log_event("STOP_LOSS", {"exit": current_price, "pnl_pct": pnl})
-            reset_state_on_sl(state, direction)  # 손절 전용 초기화 (재진입 방지 락 걸기)
+            reset_state_on_sl(state, direction)
             return
 
+    # 🏆 2. 최종 익절(TP3) 검증
     if not state.get("tp3_sent"):
         hit_tp3 = current_price >= tp3 if direction == "LONG" else current_price <= tp3
         if hit_tp3:
@@ -542,6 +548,7 @@ def monitor_active(state, current_price):
             reset_state_normal(state)
             return
 
+    # 🎯 3. 중간 익절(TP2) 검증
     if not state.get("tp2_sent"):
         hit_tp2 = current_price >= tp2 if direction == "LONG" else current_price <= tp2
         if hit_tp2:
@@ -550,6 +557,7 @@ def monitor_active(state, current_price):
             telegram_send(msg_tp(direction, "TP2", current_price, "TP3"))
             log_event("TP2", {"price": current_price})
 
+    # 🎯 4. 1차 익절(TP1) 검증
     if not state.get("tp1_sent"):
         hit_tp1 = current_price >= tp1 if direction == "LONG" else current_price <= tp1
         if hit_tp1:
@@ -565,7 +573,7 @@ def monitor_active(state, current_price):
 
 def main():
     print("====================================")
-    print(" GOLD SMART SIGNAL (ANTI-WHIPSAW)")
+    print(" GOLD SMART SIGNAL (ROBUST V13)")
     print(f" V{VERSION}")
     print("====================================\n")
 
@@ -593,7 +601,7 @@ def main():
     print(f"Current Status: {state.get('status')}\n")
 
     if state.get("status") == "ACTIVE":
-        print("Monitoring active position...")
+        print("Monitoring active position with realtime price...")
         monitor_active(state, current_price)
         return
 
@@ -607,8 +615,8 @@ def main():
         print("Signal blocked by Cooldown or SL Lock.")
         return
 
-    print(f"VALID SIGNAL FOUND: {direction} -> Executing Immediately!")
-    execute_immediate_entry(state, direction, m15, five)
+    print(f"VALID SIGNAL FOUND: {direction} -> Executing Immediately at {fmt_price(current_price)}!")
+    execute_immediate_entry(state, direction, m15, five, current_price)
 
 
 if __name__ == "__main__":
