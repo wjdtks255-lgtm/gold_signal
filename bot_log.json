@@ -299,5 +299,36 @@
       "entry": 4201.0,
       "sl": 4205.531418034852
     }
+  },
+  {
+    "time": "2026-09-30T18:36:18.206765+09:00",
+    "version": "14.0.0",
+    "event": "SL_HIT",
+    "price": 4216.10009765625,
+    "status": "ACTIVE",
+    "direction": "LONG",
+    "entry": 4227.89990234375,
+    "sl": 4221.595377093805,
+    "tp1": 4235.465332643685,
+    "tp2": 4240.508952843641,
+    "tp3": 4246.813478093586
+  },
+  {
+    "time": "2026-09-30T18:36:18.207535+09:00",
+    "version": "14.0.0",
+    "event": "EXIT",
+    "price": 4216.10009765625,
+    "status": "IDLE",
+    "direction": null,
+    "entry": null,
+    "sl": null,
+    "tp1": null,
+    "tp2": null,
+    "tp3": null,
+    "extra": {
+      "reason": "SL",
+      "old_direction": "LONG",
+      "old_entry": 4227.89990234375
+    }
   }
 ]
