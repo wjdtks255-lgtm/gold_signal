@@ -8,11 +8,11 @@ import requests
 import yfinance as yf
 
 # ============================================================
-# GOLD FUTURES SMART SIGNAL BOT (ULTIMATE ROBUST VERSION)
-# V13.0 - REALTIME PRICE ANCHORING & EDGE-CASE HARDENING
+# GOLD FUTURES SMART SIGNAL BOT (DUPLICATE-BLOCK VERSION)
+# V13.1 - PROCESS LOCK & REALTIME PRICE ANCHORING
 # ============================================================
 
-VERSION = "13.0.0"
+VERSION = "13.1.0"
 STATE_VERSION = VERSION
 TICKER = "GC=F"
 TV_LINK = "https://www.tradingview.com/symbols/GC1!/"
@@ -27,7 +27,7 @@ MIN_M15_SCORE = 5
 STRONG_M15_SCORE = 6     
 MIN_ADX = 15.0           
 COOLDOWN_MINUTES = 45    
-SL_COOLDOWN_MINUTES = 120  # 손절 후 동일 방향 재진입 차단 (2시간)
+SL_COOLDOWN_MINUTES = 120  
 
 ENTRY_RISK_ATR = 1.35
 MIN_RISK_ATR = 0.55
@@ -123,7 +123,7 @@ def chart_link_html():
 
 def msg_entry(direction, entry, sl, tp1, tp2, tp3, m15_score, five_score, rsi_value, adx_value):
     d = "롱" if direction == "LONG" else "숏"
-    return f"""🥇 <b>금 선물 스마트 시그널 (실시간 앵커링 V13)</b>
+    return f"""🥇 <b>금 선물 스마트 시그널 (중복 방지 V13.1)</b>
 ━━━━━━━━━━━━━━━━━━━━
 
 🔴 <b>{d} 포지션 즉시 실행</b>
@@ -146,7 +146,7 @@ RSI            : {rsi_value:.2f}
 ADX (추세강도) : {adx_value:.2f}
 
 ━━━━━━━━━━━━━━━━━━━━
-⚙️ 전략 : 실시간 앵커링 + 휩소 방어 가드
+⚙️ 전략 : 프로세스 락 + 실시간 앵커링
 🔴 현재 포지션 실시간 관리 중
 
 {chart_link_html()}"""
@@ -199,7 +199,7 @@ def msg_sl(direction, entry, price, pnl_pct):
 📉 손익률   : <b>{pnl_pct:+.2f}%</b>
 
 ━━━━━━━━━━━━━━━━━━━━
-🛑 손절 처리 완료. 동일 방향 휩소 방지를 위해 2시간 동안 재진입이 제한됩니다.
+🛑 손절 처리 완료. 동일 방향 재진입이 2시간 동안 제한됩니다.
 
 {chart_link_html()}"""
 
@@ -446,7 +446,6 @@ def signal_allowed(state, direction):
             sl_dt = datetime.fromisoformat(last_sl_time)
             sl_elapsed = (now_utc() - sl_dt).total_seconds() / 60
             if sl_elapsed < SL_COOLDOWN_MINUTES:
-                print(f"SL Lock active for {direction}. Elapsed: {sl_elapsed:.1f}m / {SL_COOLDOWN_MINUTES}m")
                 return False
         except Exception:
             pass
@@ -473,11 +472,10 @@ def find_new_signal(m15, five):
 
 
 # ============================================================
-# ACTIVE EXECUTION (REALTIME PRICE ANCHORING)
+# ACTIVE EXECUTION
 # ============================================================
 
 def execute_immediate_entry(state, direction, market, five, current_price):
-    # 🎯 실시간 현재가(Current Price)를 진입가로 직접 앵커링
     entry = float(current_price)
     risk = max(five["atr"] * MIN_RISK_ATR, min(five["atr"] * ENTRY_RISK_ATR, five["atr"] * MAX_RISK_ATR))
 
@@ -529,7 +527,6 @@ def monitor_active(state, current_price):
     tp2 = float(state["tp2"])
     tp3 = float(state["tp3"])
 
-    # 🛑 1. 손절(SL) 여부 최우선 검증 (슬리피지 및 갭 하락 대비)
     if not state.get("sl_sent"):
         hit_sl = current_price <= sl if direction == "LONG" else current_price >= sl
         if hit_sl:
@@ -539,7 +536,6 @@ def monitor_active(state, current_price):
             reset_state_on_sl(state, direction)
             return
 
-    # 🏆 2. 최종 익절(TP3) 검증
     if not state.get("tp3_sent"):
         hit_tp3 = current_price >= tp3 if direction == "LONG" else current_price <= tp3
         if hit_tp3:
@@ -548,7 +544,6 @@ def monitor_active(state, current_price):
             reset_state_normal(state)
             return
 
-    # 🎯 3. 중간 익절(TP2) 검증
     if not state.get("tp2_sent"):
         hit_tp2 = current_price >= tp2 if direction == "LONG" else current_price <= tp2
         if hit_tp2:
@@ -557,7 +552,6 @@ def monitor_active(state, current_price):
             telegram_send(msg_tp(direction, "TP2", current_price, "TP3"))
             log_event("TP2", {"price": current_price})
 
-    # 🎯 4. 1차 익절(TP1) 검증
     if not state.get("tp1_sent"):
         hit_tp1 = current_price >= tp1 if direction == "LONG" else current_price <= tp1
         if hit_tp1:
@@ -573,18 +567,32 @@ def monitor_active(state, current_price):
 
 def main():
     print("====================================")
-    print(" GOLD SMART SIGNAL (ROBUST V13)")
+    print(" GOLD SMART SIGNAL (LOCK V13.1)")
     print(f" V{VERSION}")
     print("====================================\n")
 
     state = load_state()
 
+    one_df = download_data("1m", "7d")
+    if one_df is None or one_df.empty:
+        print("1m data download failed.")
+        return
+
+    current_price = float(one_df["Close"].iloc[-1])
+    print(f"Current Price : {fmt_price(current_price)}")
+    print(f"Current Status: {state.get('status')}\n")
+
+    # 🛑 [중복 실행 방지 가드] 이미 포지션이 ACTIVE 상태라면 신규 탐색을 절대 하지 않고 모니터링만 수행!
+    if state.get("status") == "ACTIVE":
+        print("Position is already ACTIVE. Monitoring current position only...")
+        monitor_active(state, current_price)
+        return
+
     h1_df = download_data("1h", "2y")
     m15_df = download_data("15m", "60d")
     five_df = download_data("5m", "30d")
-    one_df = download_data("1m", "7d")
 
-    if any(x is None for x in [h1_df, m15_df, five_df, one_df]):
+    if any(x is None for x in [h1_df, m15_df, five_df]):
         print("Market data download failed.")
         return
 
@@ -593,16 +601,6 @@ def main():
 
     if not m15 or not five:
         print("Indicator calculation failed.")
-        return
-
-    current_price = float(one_df["Close"].iloc[-1])
-
-    print(f"Current Price : {fmt_price(current_price)}")
-    print(f"Current Status: {state.get('status')}\n")
-
-    if state.get("status") == "ACTIVE":
-        print("Monitoring active position with realtime price...")
-        monitor_active(state, current_price)
         return
 
     direction = find_new_signal(m15, five)
