@@ -211,5 +211,15 @@
     "data": {
       "direction": "LONG"
     }
+  },
+  {
+    "time": "2026-09-30 02:11:19 UTC",
+    "event": "PENDING_CREATED",
+    "data": {
+      "direction": "SHORT",
+      "signal_price": 4203.60009765625,
+      "zone_low": 4204.204578027872,
+      "zone_high": 4206.320259328551
+    }
   }
 ]
