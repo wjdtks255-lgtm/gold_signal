@@ -228,5 +228,14 @@
     "data": {
       "direction": "SHORT"
     }
+  },
+  {
+    "time": "2026-09-30 03:17:51 UTC",
+    "event": "IMMEDIATE_ENTRY",
+    "data": {
+      "direction": "LONG",
+      "entry": 4210.89990234375,
+      "sl": 4205.755748592314
+    }
   }
 ]
