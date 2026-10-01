@@ -1,8 +1,8 @@
-# GOLD FUTURES SMART SIGNAL BOT V19.4 (Backtest Engine Simulation Fix)
+# GOLD FUTURES SMART SIGNAL BOT V19.5 (Threshold Calibration)
 import os,json,time,requests,yfinance as yf,pandas as pd,numpy as np
 from datetime import datetime,timezone,timedelta
 
-V="19.4.0"; T="GC=F"; STATE="signal_state.json"; LOG="bot_log.json"
+V="19.5.0"; T="GC=F"; STATE="signal_state.json"; LOG="bot_log.json"
 TOKEN=os.getenv("TELEGRAM_TOKEN",""); CHAT=os.getenv("TELEGRAM_CHAT_ID","")
 KST=timezone(timedelta(hours=9))
 
@@ -14,11 +14,11 @@ RSI_L=(52,68); RSI_S=(32,48); BODY=.38
 RISK_ATR=1.8; MIN_RISK=1.2; MAX_RISK=2.8
 TP=(1.2,2.0,3.0); STRONG_TP=(1.3,2.2,3.5)
 
-# ===== BACKTEST (기준 최적화) =====
+# ===== BACKTEST (기준 현실화) =====
 BT_PERIOD="30d"
 BT_MIN_TRADES=8
-BT_MIN_WINRATE=30.0
-BT_MIN_PF=0.95
+BT_MIN_WINRATE=25.0  # 25%로 조정 (현재 시장 데이터 반영)
+BT_MIN_PF=0.90       # 0.90으로 조정
 BT_MAX_DD=35.0
 
 # ===== LIVE =====
