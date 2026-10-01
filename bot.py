@@ -1,25 +1,25 @@
-# GOLD FUTURES SMART SIGNAL BOT V19.3 (Adaptive Filter Tuning)
+# GOLD FUTURES SMART SIGNAL BOT V19.4 (Backtest Engine Simulation Fix)
 import os,json,time,requests,yfinance as yf,pandas as pd,numpy as np
 from datetime import datetime,timezone,timedelta
 
-V="19.3.0"; T="GC=F"; STATE="signal_state.json"; LOG="bot_log.json"
+V="19.4.0"; T="GC=F"; STATE="signal_state.json"; LOG="bot_log.json"
 TOKEN=os.getenv("TELEGRAM_TOKEN",""); CHAT=os.getenv("TELEGRAM_CHAT_ID","")
 KST=timezone(timedelta(hours=9))
 
 # ===== ADAPTIVE STRATEGY PARAMS =====
-ADX_TREND_MIN = 24  # 추세 필터 강화 (기존 22 -> 24)
+ADX_TREND_MIN = 24
 RSI_L=(52,68); RSI_S=(32,48); BODY=.38
 
 # ===== RISK =====
 RISK_ATR=1.8; MIN_RISK=1.2; MAX_RISK=2.8
 TP=(1.2,2.0,3.0); STRONG_TP=(1.3,2.2,3.5)
 
-# ===== BACKTEST (필터 최적화) =====
+# ===== BACKTEST (기준 최적화) =====
 BT_PERIOD="30d"
 BT_MIN_TRADES=8
-BT_MIN_WINRATE=30.0  # 시장 상황 반영 30%로 조정
-BT_MIN_PF=0.90
-BT_MAX_DD=40.0
+BT_MIN_WINRATE=30.0
+BT_MIN_PF=0.95
+BT_MAX_DD=35.0
 
 # ===== LIVE =====
 PRICE_MAX_AGE=8
@@ -287,7 +287,7 @@ def targets(e,risk,strong,d):
 
 
 # =========================================================
-# BACKTEST ENGINE (Adaptive)
+# BACKTEST ENGINE (Adaptive & Fixed Simulation Loop)
 # =========================================================
 def backtest(x15,x5):
     print("\n====================================")
@@ -317,7 +317,7 @@ def backtest(x15,x5):
                 best_d = d
                 best_regime = regime
 
-        threshold = 6.0 if best_regime == "TREND" else 5.0  # 기준 상향하여 노이즈 제거
+        threshold = 6.0 if best_regime == "TREND" else 5.0
         if not best_d or best_score < threshold:
             continue
 
@@ -334,39 +334,59 @@ def backtest(x15,x5):
         t1,t2,t3=targets(e,risk,strong,best_d)
 
         result=None; exit_price=None
+        current_sl = sl
+        tp1_reached = False
+        tp2_reached = False
 
         for k in range(i+1,min(i+80,len(x15))):
             c=x15.iloc[k]
             hi=float(c.High);lo=float(c.Low)
 
             if best_d=="LONG":
-                if lo<=sl:
-                    result="LOSS";exit_price=sl;break
-                if hi>=t1:
-                    sl2=e
-                    if lo<=sl2:
-                        result="BE";exit_price=e;break
-                    if hi>=t2:
-                        sl3=t1
-                        if lo<=sl3:
-                            result="TP1";exit_price=t1;break
-                        if hi>=t3:
-                            result="WIN";exit_price=t3;break
-            else:
-                if hi>=sl:
-                    result="LOSS";exit_price=sl;break
-                if lo<=t1:
-                    sl2=e
-                    if hi>=sl2:
-                        result="BE";exit_price=e;break
-                    if lo<=t2:
-                        sl3=t1
-                        if hi>=sl3:
-                            result="TP1";exit_price=t1;break
-                        if lo<=t3:
-                            result="WIN";exit_price=t3;break
+                if lo <= current_sl:
+                    if tp2_reached:
+                        result="TP1"; exit_price=t1
+                    elif tp1_reached:
+                        result="BE"; exit_price=e
+                    else:
+                        result="LOSS"; exit_price=current_sl
+                    break
+                
+                if hi >= t3:
+                    result="WIN"; exit_price=t3; break
+                if hi >= t2:
+                    tp2_reached = True
+                    current_sl = t1
+                if hi >= t1:
+                    tp1_reached = True
+                    current_sl = e
 
-        if result is None:continue
+            else:
+                if hi >= current_sl:
+                    if tp2_reached:
+                        result="TP1"; exit_price=t1
+                    elif tp1_reached:
+                        result="BE"; exit_price=e
+                    else:
+                        result="LOSS"; exit_price=current_sl
+                    break
+
+                if lo <= t3:
+                    result="WIN"; exit_price=t3; break
+                if lo <= t2:
+                    tp2_reached = True
+                    current_sl = t1
+                if lo <= t1:
+                    tp1_reached = True
+                    current_sl = e
+
+        if result is None:
+            c_last = x15.iloc[min(i+79, len(x15)-1)]
+            exit_price = float(c_last.Close)
+            if best_d == "LONG":
+                result = "WIN" if exit_price > e else "LOSS"
+            else:
+                result = "WIN" if exit_price < e else "LOSS"
 
         if best_d=="LONG": ret=(exit_price-e)/risk
         else: ret=(e-exit_price)/risk
@@ -473,7 +493,6 @@ def tp_alert(s,n,p):
     e=s["entry"]
     gain=(p/e-1)*100 if s["direction"]=="LONG" else (e/p-1)*100
     sl=s["entry"] if n==1 else s["tp1"]
-    nxt="TP2" if n==1 else "TP3"
     return f"""<b>🟢 GOLD FUTURES · TP{n} 달성</b>
 ━━━━━━━━━━━━━━━━━━━━
 
