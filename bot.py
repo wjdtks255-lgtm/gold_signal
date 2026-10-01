@@ -1,8 +1,8 @@
-# GOLD FUTURES SMART SIGNAL BOT V19.6 (Live Price Robust Fallback)
+# GOLD FUTURES SMART SIGNAL BOT V19.7 (NaN Safe Price & Level Fix)
 import os,json,time,requests,yfinance as yf,pandas as pd,numpy as np
 from datetime import datetime,timezone,timedelta
 
-V="19.6.0"; T="GC=F"; STATE="signal_state.json"; LOG="bot_log.json"
+V="19.7.0"; T="GC=F"; STATE="signal_state.json"; LOG="bot_log.json"
 TOKEN=os.getenv("TELEGRAM_TOKEN",""); CHAT=os.getenv("TELEGRAM_CHAT_ID","")
 KST=timezone(timedelta(hours=9))
 
@@ -22,7 +22,7 @@ BT_MIN_PF=0.90
 BT_MAX_DD=35.0
 
 # ===== LIVE =====
-PRICE_MAX_AGE=120  # 허용 연장 (120분)
+PRICE_MAX_AGE=120
 COOLDOWN=45
 FAIL_ALERT_COOLDOWN = 4 * 3600
 
@@ -34,7 +34,13 @@ def ts():
     return now().strftime("%Y-%m-%d %H:%M:%S")
 
 def m(x):
-    return f"${float(x):,.2f}"
+    try:
+        val = float(x)
+        if np.isnan(val) or np.isinf(val):
+            return "$0.00"
+        return f"${val:,.2f}"
+    except:
+        return "$0.00"
 
 def save(p,x):
     q=p+".tmp"
@@ -147,7 +153,7 @@ def addind(x):
         x.High-x.Low,
         (x.High-x.Close.shift()).abs(),
         (x.Low-x.Close.shift()).abs()],axis=1).max(axis=1)
-    x["atr"]=tr.rolling(14).mean()
+    x["atr"]=tr.rolling(14).mean().fillna(x.Close * 0.01) # NaN 방어
 
     up=x.High.diff()
     dn=-x.Low.diff()
@@ -157,24 +163,24 @@ def addind(x):
     p=100*plus.rolling(14).mean()/a
     n=100*minus.rolling(14).mean()/a
     dx=100*(p-n).abs()/(p+n).replace(0,np.nan)
-    x["adx"]=dx.rolling(14).mean()
+    x["adx"]=dx.rolling(14).mean().fillna(20)
 
     x["bb_mid"] = x.Close.rolling(20).mean()
-    bb_std = x.Close.rolling(20).std()
+    bb_std = x.Close.rolling(20).std().fillna(x.Close * 0.02)
     x["bb_upper"] = x["bb_mid"] + (bb_std * 2)
     x["bb_lower"] = x["bb_mid"] - (bb_std * 2)
-    x["bb_width"] = (x["bb_upper"] - x["bb_lower"]) / x["bb_mid"]
-    x["bb_width_ma"] = x["bb_width"].rolling(20).mean()
+    x["bb_width"] = (x["bb_upper"] - x["bb_lower"]) / x["bb_mid"].replace(0,np.nan)
+    x["bb_width_ma"] = x["bb_width"].rolling(20).mean().fillna(0.02)
 
     x["body"]=(x.Close-x.Open).abs()/(x.High-x.Low).replace(0,np.nan)
     x["pos"]=(x.Close-x.Low)/(x.High-x.Low).replace(0,np.nan)
-    return x.dropna()
+    return x.fillna(0)
 
 def detect_regime(x, i=-1):
     r = x.iloc[i]
-    adx = r.adx
-    bb_w = r.bb_width
-    bb_w_ma = r.bb_width_ma
+    adx = float(getattr(r, "adx", 20))
+    bb_w = float(getattr(r, "bb_width", 0.02))
+    bb_w_ma = float(getattr(r, "bb_width_ma", 0.02))
 
     if adx >= ADX_TREND_MIN and bb_w >= bb_w_ma * 0.95:
         return "TREND"
@@ -257,29 +263,40 @@ def evaluate_multi_strategy(x15, x5, d, i=-1):
 
 
 # =========================================================
-# POSITION CALC
+# POSITION CALC (NaN Safe)
 # =========================================================
 def levels(x,d,i):
-    r=x.iloc[i]; e=float(r.Close); a=float(r.atr)
+    r=x.iloc[i]; e=float(r.Close)
+    a=float(r.atr) if not pd.isna(r.atr) and r.atr > 0 else e * 0.01
     sw=x.iloc[max(0,i-7):i+1]
 
     if d=="LONG":
-        sl0=float(sw.Low.min())-a*.25
+        low_min = float(sw.Low.min()) if not pd.isna(sw.Low.min()) else e - (a * 2)
+        sl0=low_min-a*.25
         risk=max(e-sl0,a*MIN_RISK)
         risk=min(risk,a*MAX_RISK)
         sl=e-risk
     else:
-        sl0=float(sw.High.max())+a*.25
+        high_max = float(sw.High.max()) if not pd.isna(sw.High.max()) else e + (a * 2)
+        sl0=high_max+a*.25
         risk=max(sl0-e,a*MIN_RISK)
         risk=min(risk,a*MAX_RISK)
         sl=e+risk
 
-    return e,sl,risk
+    # 최종 안전 장치 (NaN 방어)
+    if np.isnan(e) or np.isnan(sl) or np.isnan(risk) or risk <= 0:
+        risk = e * 0.01
+        sl = e - risk if d == "LONG" else e + risk
+
+    return float(e), float(sl), float(risk)
 
 def targets(e,risk,strong,d):
     z=STRONG_TP if strong else TP
-    if d=="LONG":return [e+risk*q for q in z]
-    return [e-risk*q for q in z]
+    if np.isnan(e) or np.isnan(risk) or risk <= 0:
+        risk = e * 0.01
+    if d=="LONG":
+        return [float(e+risk*q) for q in z]
+    return [float(e-risk*q) for q in z]
 
 
 # =========================================================
@@ -387,6 +404,7 @@ def backtest(x15,x5):
         if best_d=="LONG": ret=(exit_price-e)/risk
         else: ret=(e-exit_price)/risk
 
+        if np.isnan(ret): continue
         trades.append(ret)
         equity+=ret
         peak=max(peak,equity)
@@ -434,7 +452,6 @@ def backtest(x15,x5):
 # LIVE PRICE & ROBUST FALLBACK
 # =========================================================
 def live():
-    # 1. fast_info 시도
     try:
         f=yf.Ticker(T).fast_info
         for k in ["last_price","regularMarketPrice"]:
@@ -442,7 +459,6 @@ def live():
                 return float(f[k]),0,"FAST"
     except:pass
 
-    # 2. 1분봉 데이터 시도
     try:
         x=clean(yf.download(
             T,period="1d",interval="1m",
@@ -454,7 +470,6 @@ def live():
             return float(x.Close.iloc[-1]),a,"1M"
     except:pass
 
-    # 3. 5분봉 최신 데이터 Fallback (라이브 대체)
     try:
         x5 = clean(yf.download(
             T, period="1d", interval="5m",
