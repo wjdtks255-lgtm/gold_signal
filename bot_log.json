@@ -1457,5 +1457,45 @@
       "age_15m": 27.88735858333333,
       "age_1h": 87.88735996666666
     }
+  },
+  {
+    "time": "2026-10-02T00:31:32.109604+09:00",
+    "version": "17.4.0",
+    "event": "POSITION_EXIT_SL",
+    "status": "IDLE",
+    "direction": null,
+    "entry": null,
+    "sl": null,
+    "tp1": null,
+    "tp2": null,
+    "tp3": null,
+    "stage": "INITIAL",
+    "extra": {
+      "exit_price": 4192.0,
+      "old_entry": 4200.7,
+      "old_sl": 4207.75,
+      "old_tp1": 4207.75,
+      "old_tp2": 4212.45,
+      "old_tp3": 4218.33
+    }
+  },
+  {
+    "time": "2026-10-02T00:31:32.112384+09:00",
+    "version": "17.4.0",
+    "event": "RUN_ACTIVE_MONITOR",
+    "status": "IDLE",
+    "direction": null,
+    "entry": null,
+    "sl": null,
+    "tp1": null,
+    "tp2": null,
+    "tp3": null,
+    "stage": "INITIAL",
+    "extra": {
+      "age_1m": 11.519448733333332,
+      "age_5m": 16.519449833333333,
+      "age_15m": 31.51945065,
+      "age_1h": 91.51945189999999
+    }
   }
 ]
