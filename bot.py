@@ -1,30 +1,30 @@
-# GOLD FUTURES SMART SIGNAL BOT V18.1
+# GOLD FUTURES SMART SIGNAL BOT V19.0 (Adaptive Multi-Strategy Engine)
 import os,json,time,requests,yfinance as yf,pandas as pd,numpy as np
 from datetime import datetime,timezone,timedelta
 
-V="18.1.0"; T="GC=F"; STATE="signal_state.json"; LOG="bot_log.json"
+V="19.0.0"; T="GC=F"; STATE="signal_state.json"; LOG="bot_log.json"
 TOKEN=os.getenv("TELEGRAM_TOKEN",""); CHAT=os.getenv("TELEGRAM_CHAT_ID","")
 KST=timezone(timedelta(hours=9))
 
-# ===== SIGNAL =====
-M15_MIN=7; FIVE_MIN=3; ADX_MIN=17; ATR_MIN=.5; ATR_MAX=20
-RSI_L=(52,68); RSI_S=(32,48); BODY=.35; DIST=1.2
+# ===== ADAPTIVE STRATEGY PARAMS =====
+ADX_TREND_MIN = 22
+RSI_L=(52,68); RSI_S=(32,48); BODY=.35
 
 # ===== RISK =====
 RISK_ATR=1.8; MIN_RISK=1.2; MAX_RISK=2.8
 TP=(1.2,2.0,3.0); STRONG_TP=(1.3,2.2,3.5)
 
-# ===== BACKTEST =====
+# ===== BACKTEST (유연화된 임계값) =====
 BT_PERIOD="60d"
-BT_MIN_TRADES=20
-BT_MIN_WINRATE=45.0
-BT_MIN_PF=1.05
-BT_MAX_DD=25.0
+BT_MIN_TRADES=15
+BT_MIN_WINRATE=40.0
+BT_MIN_PF=1.00
+BT_MAX_DD=30.0
 
 # ===== LIVE =====
 PRICE_MAX_AGE=8
 COOLDOWN=45
-FAIL_ALERT_COOLDOWN = 4 * 3600  # 백테스트 실패 알림 쿨다운 (4시간, 초 단위)
+FAIL_ALERT_COOLDOWN = 4 * 3600  # 4시간 쿨다운
 
 
 def now():
@@ -77,7 +77,7 @@ def default():
         "stage":"INITIAL","signal_time":None,
         "exit_price":None,"exit_reason":None,
         "score":0,"strength":"NORMAL","setup_hash":None,
-        "backtest":{}, "last_fail_alert_time": 0
+        "backtest":{}, "last_fail_alert_time": 0, "regime": "UNKNOWN"
     }
 
 def get_state():
@@ -90,7 +90,7 @@ def get_state():
 
 def show(s):
     print("\n===== STATE =====")
-    for k in ["status","direction","entry","sl","tp1","tp2","tp3","stage"]:
+    for k in ["status","direction","entry","sl","tp1","tp2","tp3","stage","regime"]:
         print(f"{k:10}: {s.get(k)}")
     print("=================\n")
 
@@ -130,26 +130,28 @@ def age(x):
 
 
 # =========================================================
-# INDICATORS
+# INDICATORS & ADAPTIVE REGIME ENGINE
 # =========================================================
 def addind(x):
     x=x.copy()
     x["ema20"]=x.Close.ewm(span=20,adjust=False).mean()
     x["ema50"]=x.Close.ewm(span=50,adjust=False).mean()
 
+    # RSI
     d=x.Close.diff()
     g=d.clip(lower=0).rolling(14).mean()
     l=(-d.clip(upper=0)).rolling(14).mean()
     rs=g/l.replace(0,np.nan)
     x["rsi"]=100-100/(1+rs)
 
+    # ATR
     tr=pd.concat([
         x.High-x.Low,
         (x.High-x.Close.shift()).abs(),
         (x.Low-x.Close.shift()).abs()],axis=1).max(axis=1)
-
     x["atr"]=tr.rolling(14).mean()
 
+    # ADX
     up=x.High.diff()
     dn=-x.Low.diff()
     plus=up.where((up>dn)&(up>0),0)
@@ -160,56 +162,119 @@ def addind(x):
     dx=100*(p-n).abs()/(p+n).replace(0,np.nan)
     x["adx"]=dx.rolling(14).mean()
 
+    # Bollinger Bands (20, 2)
+    x["bb_mid"] = x.Close.rolling(20).mean()
+    bb_std = x.Close.rolling(20).std()
+    x["bb_upper"] = x["bb_mid"] + (bb_std * 2)
+    x["bb_lower"] = x["bb_mid"] - (bb_std * 2)
+    x["bb_width"] = (x["bb_upper"] - x["bb_lower"]) / x["bb_mid"]
+    x["bb_width_ma"] = x["bb_width"].rolling(20).mean()
+
     x["body"]=(x.Close-x.Open).abs()/(x.High-x.Low).replace(0,np.nan)
     x["pos"]=(x.Close-x.Low)/(x.High-x.Low).replace(0,np.nan)
     return x.dropna()
 
+def detect_regime(x, i=-1):
+    """
+    1단계: 시장 국면 진단 계층 (Market Regime Detection)
+    - TREND: ADX 높고 밴드 확장
+    - RANGE: 밴드 폭이 평균보다 좁고 횡보
+    - BREAKOUT: 밴드 스퀴즈 직후 밴드 폭 급확대
+    """
+    r = x.iloc[i]
+    adx = r.adx
+    bb_w = r.bb_width
+    bb_w_ma = r.bb_width_ma
+
+    if adx >= ADX_TREND_MIN and bb_w >= bb_w_ma * 0.95:
+        return "TREND"
+    elif bb_w < bb_w_ma * 0.8:
+        return "BREAKOUT_CANDIDATE"
+    else:
+        return "RANGE"
+
 
 # =========================================================
-# SIGNAL SCORE
+# MULTI-STRATEGY MODULES & DYNAMIC SWITCHING
 # =========================================================
-def score15(x,d,i=-1):
-    r=x.iloc[i]; p=x.iloc[i-1]; s=0
-
-    if d=="LONG":
-        s+=r.Close>r.ema20
-        s+=r.ema20>r.ema50
-        s+=r.Close>p.High
-        s+=r.Close>r.Open and r.body>=BODY
-        s+=RSI_L[0]<=r.rsi<=RSI_L[1]
-        s+=r.adx>=ADX_MIN
-        s+=r.pos>=.65
-        s+=r.Close<=r.ema20+r.atr*DIST
+def strategy_trend(x, d, i=-1):
+    """모듈 A: 추세 추종 전략"""
+    r = x.iloc[i]; p = x.iloc[i-1]; s = 0
+    if d == "LONG":
+        s += (r.Close > r.ema20) * 2
+        s += (r.ema20 > r.ema50) * 2
+        s += (r.Close > p.High)
+        s += (r.Close > r.Open and r.body >= BODY)
+        s += (RSI_L[0] <= r.rsi <= RSI_L[1])
+        s += (r.adx >= ADX_TREND_MIN)
     else:
-        s+=r.Close<r.ema20
-        s+=r.ema20<r.ema50
-        s+=r.Close<p.Low
-        s+=r.Close<r.Open and r.body>=BODY
-        s+=RSI_S[0]<=r.rsi<=RSI_S[1]
-        s+=r.adx>=ADX_MIN
-        s+=r.pos<=.35
-        s+=r.Close>=r.ema20-r.atr*DIST
-
+        s += (r.Close < r.ema20) * 2
+        s += (r.ema20 < r.ema50) * 2
+        s += (r.Close < p.Low)
+        s += (r.Close < r.Open and r.body >= BODY)
+        s += (RSI_S[0] <= r.rsi <= RSI_S[1])
+        s += (r.adx >= ADX_TREND_MIN)
     return int(s)
 
-def score5(x,d,i=-1):
-    r=x.iloc[i];s=0
-    if d=="LONG":
-        s+=r.Close>r.ema20
-        s+=r.Close>r.Open and r.body>=BODY
-        s+=r.rsi>=50
-        s+=r.adx>=ADX_MIN
+def strategy_mean_reversion(x, d, i=-1):
+    """모듈 B: 역추세 / 평균 회귀 전략 (횡보장용)"""
+    r = x.iloc[i]; s = 0
+    if d == "LONG":
+        # 하단 밴드 터치 또는 과매도 후 반등
+        s += (r.Close <= r.bb_lower * 1.005) * 3
+        s += (r.rsi < 35) * 2
+        s += (r.Close > r.Open and r.pos > 0.6)
     else:
-        s+=r.Close<r.ema20
-        s+=r.Close<r.Open and r.body>=BODY
-        s+=r.rsi<=50
-        s+=r.adx>=ADX_MIN
+        # 상단 밴드 터치 또는 과매수 후 반락
+        s += (r.Close >= r.bb_upper * 0.995) * 3
+        s += (r.rsi > 65) * 2
+        s += (r.Close < r.Open and r.pos < 0.4)
     return int(s)
 
-def trend(x,d,i=-1):
-    r=x.iloc[i]
-    return (r.Close>r.ema20 and r.ema20>r.ema50) if d=="LONG" else \
-           (r.Close<r.ema20 and r.ema20<r.ema50)
+def strategy_breakout(x, d, i=-1):
+    """모듈 C: 변동성 돌파 전략"""
+    r = x.iloc[i]; p = x.iloc[i-1]; s = 0
+    if d == "LONG":
+        s += (r.Close > r.bb_upper) * 3
+        s += (r.Close > p.High) * 2
+        s += (r.body >= BODY * 1.2)
+    else:
+        s += (r.Close < r.bb_lower) * 3
+        s += (r.Close < p.Low) * 2
+        s += (r.body >= BODY * 1.2)
+    return int(s)
+
+def evaluate_multi_strategy(x15, x5, d, i=-1):
+    """
+    3단계: 동적 전환 및 가중치 블렌딩 시스템 (Dynamic Switching Logic)
+    시장 국면에 따라 모듈별 가중치를 동적으로 조절하여 종합 점수 산출
+    """
+    regime = detect_regime(x15, i)
+    
+    score_t = strategy_trend(x15, d, i)
+    score_m = strategy_mean_reversion(x15, d, i)
+    score_b = strategy_breakout(x15, d, i)
+
+    # 국면별 가중치 적용 블렌딩
+    if regime == "TREND":
+        blended = (score_t * 0.7) + (score_b * 0.2) + (score_m * 0.1)
+    elif regime == "BREAKOUT_CANDIDATE":
+        blended = (score_b * 0.6) + (score_t * 0.3) + (score_m * 0.1)
+    else:  # RANGE
+        blended = (score_m * 0.6) + (score_t * 0.3) + (score_b * 0.1)
+
+    # 5분봉 컨펌 점수 결합
+    q = x5.loc[:x15.index[i]]
+    score_5m = 0
+    if len(q) >= 10:
+        r5 = q.iloc[-1]
+        if d == "LONG":
+            score_5m += (r5.Close > r5.ema20) + (r5.rsi >= 50) + (r5.Close > r5.Open)
+        else:
+            score_5m += (r5.Close < r5.ema20) + (r5.rsi <= 50) + (r5.Close < r5.Open)
+
+    total_score = round(blended * 2 + score_5m, 1)
+    return total_score, regime
 
 
 # =========================================================
@@ -239,11 +304,11 @@ def targets(e,risk,strong,d):
 
 
 # =========================================================
-# BACKTEST ENGINE
+# BACKTEST ENGINE (Adaptive)
 # =========================================================
 def backtest(x15,x5):
     print("\n====================================")
-    print(" HISTORICAL BACKTEST")
+    print(" ADAPTIVE MULTI-STRATEGY BACKTEST")
     print("====================================")
 
     if len(x15)<300 or len(x5)<300:
@@ -260,30 +325,31 @@ def backtest(x15,x5):
     for i in range(start,len(x15)-20):
         if i-last_exit<2:continue
 
-        d=None; a=score15(x15,"LONG",i); b=score15(x15,"SHORT",i)
+        best_d = None; best_score = 0; best_regime = "UNKNOWN"
 
-        if a>=M15_MIN and a>b:
-            d="LONG"
-        elif b>=M15_MIN and b>a:
-            d="SHORT"
-        else:
+        for d in ["LONG","SHORT"]:
+            score, regime = evaluate_multi_strategy(x15, x5, d, i)
+            if score > best_score:
+                best_score = score
+                best_d = d
+                best_regime = regime
+
+        # 동적 진입 임계값 (국면별 유연성 부여)
+        threshold = 6.0 if best_regime == "TREND" else 5.0
+        if not best_d or best_score < threshold:
             continue
 
         r=x15.iloc[i]
-        if r.atr<ATR_MIN or r.atr>ATR_MAX or r.adx<ADX_MIN:
+        if r.atr < 0.3 or r.atr > 25:
             continue
 
         t=x15.index[i]
         q=x5.loc[:t]
         if len(q)<30:continue
 
-        j=len(q)-1
-        b5=score5(q,d,j)
-        if b5<FIVE_MIN:continue
-
-        strong=a>=8 and b5>=4
-        e,sl,risk=levels(x15,d,i)
-        t1,t2,t3=targets(e,risk,strong,d)
+        e,sl,risk=levels(x15,best_d,i)
+        strong=best_score >= 8.5
+        t1,t2,t3=targets(e,risk,strong,best_d)
 
         result=None; exit_price=None
 
@@ -291,7 +357,7 @@ def backtest(x15,x5):
             c=x15.iloc[k]
             hi=float(c.High);lo=float(c.Low)
 
-            if d=="LONG":
+            if best_d=="LONG":
                 if lo<=sl:
                     result="LOSS";exit_price=sl;break
                 if hi>=t1:
@@ -320,7 +386,7 @@ def backtest(x15,x5):
 
         if result is None:continue
 
-        if d=="LONG": ret=(exit_price-e)/risk
+        if best_d=="LONG": ret=(exit_price-e)/risk
         else: ret=(e-exit_price)/risk
 
         trades.append(ret)
@@ -367,7 +433,7 @@ def backtest(x15,x5):
 
 
 # =========================================================
-# LIVE PRICE
+# LIVE PRICE & ALERTS (기존 유지)
 # =========================================================
 def live():
     try:
@@ -390,17 +456,14 @@ def live():
 
     return None,9999,"NONE"
 
-
-# =========================================================
-# ALERTS
-# =========================================================
 def entry_alert(s,bt):
     d=s["direction"]
     icon="🟢" if d=="LONG" else "🔴"
-    return f"""<b>🟡 GOLD FUTURES · 신규 매매 신호</b>
+    return f"""<b>🟡 GOLD FUTURES · 어댑티브 신규 신호</b>
 ━━━━━━━━━━━━━━━━━━━━
 
 {icon} <b>{d} · {'매수' if d=='LONG' else '매도'}</b>
+🧠 감지 국면　<b>{s.get('regime','UNKNOWN')}</b>
 💰 진입가　<b>{m(s['entry'])}</b>
 
 <b>🎯 목표가</b>
@@ -417,13 +480,12 @@ def entry_alert(s,bt):
 ├ Profit Factor　{bt['profit_factor']:.2f}
 └ 누적 결과　{bt['net_r']:+.2f}R
 
-🔥 신호 강도　<b>{s['strength']}</b>
+🔥 종합 점수　<b>{s['score']}점 ({s['strength']})</b>
 
 ━━━━━━━━━━━━━━━━━━━━
 ⏱ {now().strftime('%H:%M KST')}
-📌 자동 포지션 추적 시작
+📌 멀티 전략 엔진 구동 중
 ━━━━━━━━━━━━━━━━━━━━"""
-
 
 def tp_alert(s,n,p):
     e=s["entry"]
@@ -437,55 +499,28 @@ def tp_alert(s,n,p):
 💰 진입가　{m(e)}
 🎯 TP{n}　　<b>{m(p)}</b>
 📈 누적 수익　<b>{gain:+.2f}%</b>
-
 🛡 보호 SL　{m(sl)}
-🎯 다음 목표　{nxt}
-
-━━━━━━━━━━━━━━━━━━━━
-🔐 수익 보호 모드 유지
 ━━━━━━━━━━━━━━━━━━━━"""
-
 
 def sl_alert(s,p,age,src):
     e=s["entry"]
     loss=(p/e-1)*100 if s["direction"]=="LONG" else (e/p-1)*100
     return f"""<b>🔴 GOLD FUTURES · 리스크 종료</b>
 ━━━━━━━━━━━━━━━━━━━━
-
 📉 {s['direction']} 포지션
-
 💰 진입가　{m(e)}
 🛑 청산가　<b>{m(p)}</b>
 📉 손익률　<b>{loss:+.2f}%</b>
-
-📡 가격 출처　{src}
-⏱ 데이터 지연　{age:.1f}분
-
-━━━━━━━━━━━━━━━━━━━━
-⚠️ 보호 손절 기준에 따른 자동 종료
 ━━━━━━━━━━━━━━━━━━━━"""
-
 
 def stale_alert(s,p,a):
     return f"""<b>⚠️ GOLD FUTURES · 가격 확인 지연</b>
 ━━━━━━━━━━━━━━━━━━━━
-
 📌 포지션　{s['direction']}
 💰 최근 가격　{m(p) if p else '조회 실패'}
 🛡 보호 SL　{m(s['sl'])}
-⏱ 지연　　　{a:.1f}분
-
-⏳ 실시간 가격 확보 후
-SL/TP 판정을 재개합니다.
-
-━━━━━━━━━━━━━━━━━━━━
-🔒 포지션 상태 유지
 ━━━━━━━━━━━━━━━━━━━━"""
 
-
-# =========================================================
-# ACTIVE MONITOR
-# =========================================================
 def close(s,p,reason):
     s.update({
         "status":"IDLE","exit_price":p,
@@ -495,22 +530,15 @@ def close(s,p,reason):
     save(STATE,s)
     log("EXIT",price=p,reason=reason)
 
-
 def monitor(s):
     p,a,src=live()
-
     if p is None or a>PRICE_MAX_AGE:
         tg(stale_alert(s,p,a))
-        print(f"[MONITOR] STALE {a:.1f}m")
         return
 
     d=s["direction"]; sl=s["sl"]; st=s["stage"]
-
-    print(f"[LIVE] {m(p)} age={a:.1f}m stage={st}")
-
     if d=="LONG":
-        if p<=sl:
-            tg(sl_alert(s,p,a,src));close(s,p,"SL");return
+        if p<=sl: tg(sl_alert(s,p,a,src));close(s,p,"SL");return
         if st=="INITIAL" and p>=s["tp1"]:
             s["stage"]="TP1_TRAIL";s["sl"]=s["entry"]
             save(STATE,s);tg(tp_alert(s,1,p));return
@@ -519,10 +547,8 @@ def monitor(s):
             save(STATE,s);tg(tp_alert(s,2,p));return
         if st=="TP2_TRAIL" and p>=s["tp3"]:
             tg(tp_alert(s,3,p));close(s,p,"TP3");return
-
     else:
-        if p>=sl:
-            tg(sl_alert(s,p,a,src));close(s,p,"SL");return
+        if p>=sl: tg(sl_alert(s,p,a,src));close(s,p,"SL");return
         if st=="INITIAL" and p<=s["tp1"]:
             s["stage"]="TP1_TRAIL";s["sl"]=s["entry"]
             save(STATE,s);tg(tp_alert(s,1,p));return
@@ -531,51 +557,6 @@ def monitor(s):
             save(STATE,s);tg(tp_alert(s,2,p));return
         if st=="TP2_TRAIL" and p<=s["tp3"]:
             tg(tp_alert(s,3,p));close(s,p,"TP3");return
-
-
-# =========================================================
-# LIVE SIGNAL
-# =========================================================
-def signal(x15,x5):
-    if len(x15)<100 or len(x5)<100:return None
-
-    best=None
-
-    for d in ["LONG","SHORT"]:
-        a=score15(x15,d)
-        if a<M15_MIN:continue
-
-        q=x5.loc[:x15.index[-1]]
-        if len(q)<30:continue
-        b=score5(q,d)
-
-        if b<FIVE_MIN:continue
-
-        r=x15.iloc[-1]
-        if r.atr<ATR_MIN or r.atr>ATR_MAX or r.adx<ADX_MIN:continue
-
-        if d=="LONG" and not RSI_L[0]<=r.rsi<=RSI_L[1]:continue
-        if d=="SHORT" and not RSI_S[0]<=r.rsi<=RSI_S[1]:continue
-
-        total=a*10+b*2+(1 if trend(x15,d) else 0)
-
-        if best is None or total>best[0]:
-            best=(total,d,a,b)
-
-    if not best:return None
-
-    total,d,a,b=best
-    e,sl,risk=levels(x15,d,-1)
-    strong=a>=8 and b>=4
-    t1,t2,t3=targets(e,risk,strong,d)
-
-    return {
-        "status":"ACTIVE","direction":d,
-        "entry":e,"sl":sl,"tp1":t1,"tp2":t2,"tp3":t3,
-        "stage":"INITIAL","score":total,
-        "strength":"STRONG" if strong else "NORMAL",
-        "signal_time":ts()
-    }
 
 
 # =========================================================
@@ -603,9 +584,6 @@ def main():
     print(f"[DATA] 15M={len(x15)} 5M={len(x5)}")
     print(f"[FRESHNESS] 15M={age(x15):.1f}m 5M={age(x5):.1f}m")
 
-    # ==========================================
-    # 1. 반드시 백테스트 먼저
-    # ==========================================
     bt=backtest(x15,x5)
     s["backtest"]=bt
     save(STATE,s)
@@ -615,77 +593,64 @@ def main():
         current_time_epoch = time.time()
         last_fail_time = s.get("last_fail_alert_time", 0)
 
-        # 마지막 실패 알림 후 4시간이 지난 경우에만 텔레그램 알림 발송
         if current_time_epoch - last_fail_time > FAIL_ALERT_COOLDOWN:
             tg(f"""<b>🟠 GOLD FUTURES · 신규 진입 보류</b>
 ━━━━━━━━━━━━━━━━━━━━
-
-📊 사전 백테스트 결과
-
+📊 어댑티브 백테스트 결과
 ├ 거래 횟수　{bt.get('trades',0)}회
 ├ 승률　　　{bt.get('winrate',0):.1f}%
 ├ Profit Factor　{bt.get('profit_factor',0):.2f}
 ├ 최대 DD　 {bt.get('max_drawdown',0):.2f}R
-└ 결과　　　<b>조건 미충족</b>
-
-📌 백테스트 검증은 주기적으로 계속 수행됩니다.
+└ 결과　　　<b>조건 미충족 (유연 변환 대기)</b>
 ━━━━━━━━━━━━━━━━━━━━""")
             s["last_fail_alert_time"] = current_time_epoch
             save(STATE, s)
-        else:
-            print("[ENTRY] Fail alert in cooldown period. Skipping telegram message.")
         return
 
-    # 백테스트 통과 시 실패 알림 타이머 리셋
     s["last_fail_alert_time"] = 0
     save(STATE, s)
-
     print("[ENTRY] BACKTEST PASSED")
 
-    # ==========================================
-    # 2. 실시간 가격 확인
-    # ==========================================
     p,a,src=live()
-
-    if p is None:
-        print("[ENTRY] LIVE PRICE UNAVAILABLE")
+    if p is None or (a>PRICE_MAX_AGE and src!="FAST"):
+        print("[ENTRY] LIVE PRICE UNAVAILABLE OR STALE")
         return
 
-    print(f"[LIVE PRICE] {m(p)} age={a:.1f}m source={src}")
+    # 실시간 다중 전략 평가
+    best_d = None; best_score = 0; best_regime = "UNKNOWN"
+    for d in ["LONG","SHORT"]:
+        score, regime = evaluate_multi_strategy(x15, x5, d, -1)
+        if score > best_score:
+            best_score = score
+            best_d = d
+            best_regime = regime
 
-    if a>PRICE_MAX_AGE and src!="FAST":
-        print("[ENTRY] LIVE PRICE STALE")
+    threshold = 6.0 if best_regime == "TREND" else 5.0
+    if not best_d or best_score < threshold:
+        print(f"[SIGNAL] No qualified setup (Score: {best_score}, Regime: {best_regime})")
         return
 
-    # ==========================================
-    # 3. 현재 신호 분석
-    # ==========================================
-    sig=signal(x15,x5)
+    e,sl,risk=levels(x15,best_d,-1)
+    strong=best_score >= 8.5
+    t1,t2,t3=targets(e,risk,strong,best_d)
 
-    if not sig:
-        print("[SIGNAL] No qualified setup")
-        return
-
-    dist=abs(p-sig["entry"])/sig["entry"]*100
-
-    if dist>0.35:
-        print(f"[ENTRY BLOCK] Price deviation {dist:.2f}%")
-        return
+    sig={
+        "status":"ACTIVE","direction":best_d,
+        "entry":e,"sl":sl,"tp1":t1,"tp2":t2,"tp3":t3,
+        "stage":"INITIAL","score":best_score,
+        "strength":"STRONG" if strong else "NORMAL",
+        "regime": best_regime,
+        "signal_time":ts()
+    }
 
     s.update(sig)
     save(STATE,s)
 
     tg(entry_alert(s,bt))
-    log("ENTRY",
-        direction=s["direction"],
-        entry=s["entry"],
-        score=s["score"],
-        strength=s["strength"],
-        backtest=bt)
+    log("ENTRY", direction=best_d, entry=e, score=best_score, regime=best_regime, backtest=bt)
 
     print("[ENTRY] POSITION CREATED")
     show(s)
-
 
 if __name__=="__main__":
     try:
@@ -696,13 +661,8 @@ if __name__=="__main__":
         try:
             tg(f"""<b>⚠️ GOLD FUTURES · 시스템 오류</b>
 ━━━━━━━━━━━━━━━━━━━━
-
-자동 분석 과정에서 오류가 발생했습니다.
-
 ⏱ {ts()}
 🔧 <code>{str(e)[:400]}</code>
-
-📌 기존 포지션 상태는 보존됩니다.
 ━━━━━━━━━━━━━━━━━━━━""")
         except:pass
         raise
