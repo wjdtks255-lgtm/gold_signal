@@ -9,7 +9,7 @@
   "tp3": 4218.33,
   "risk": 5.88,
   "tp1_hit": true,
-  "tp2_hit": false,
+  "tp2_hit": true,
   "tp3_hit": false,
   "signal_time": "2026-10-01T20:19:31.603225+09:00",
   "signal_id": "LONG_4205.9_4203.1_5_1_2_1",
