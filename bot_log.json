@@ -1074,5 +1074,36 @@
         "ema50": 4202.915671323345
       }
     }
+  },
+  {
+    "time": "2026-10-01T16:01:23.761505+09:00",
+    "version": "14.0.0",
+    "event": "SL_HIT",
+    "price": 4212.5,
+    "status": "ACTIVE",
+    "direction": "LONG",
+    "entry": 4220.9,
+    "sl": 4217.02,
+    "tp1": 4225.56,
+    "tp2": 4228.66,
+    "tp3": 4232.54
+  },
+  {
+    "time": "2026-10-01T16:01:23.762858+09:00",
+    "version": "14.0.0",
+    "event": "EXIT",
+    "price": 4212.5,
+    "status": "IDLE",
+    "direction": null,
+    "entry": null,
+    "sl": null,
+    "tp1": null,
+    "tp2": null,
+    "tp3": null,
+    "extra": {
+      "reason": "SL",
+      "old_direction": "LONG",
+      "old_entry": 4220.9
+    }
   }
 ]
