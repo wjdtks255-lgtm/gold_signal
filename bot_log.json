@@ -1385,5 +1385,29 @@
     "adx": 25.30479574458487,
     "signal_id": "LONG_4205.9_4203.1_5_1_2_1",
     "1m_age_minutes": 11.687634433333333
+  },
+  {
+    "time": "2026-10-01T23:06:33.029387+09:00",
+    "version": "17.1.0",
+    "event": "DATA_STALE_MONITOR",
+    "status": "ACTIVE",
+    "direction": "LONG",
+    "entry": 4200.7,
+    "sl": 4207.75,
+    "tp1": 4207.75,
+    "tp2": 4212.45,
+    "tp3": 4218.33,
+    "risk": 5.88,
+    "position_stage": "TP2_TRAIL",
+    "tp1_hit": true,
+    "tp2_hit": true,
+    "tp3_hit": false,
+    "price": null,
+    "m15_score": 5,
+    "five_score": 2,
+    "rsi": 58.45657600661197,
+    "adx": 25.30479574458487,
+    "signal_id": "LONG_4205.9_4203.1_5_1_2_1",
+    "1m_age_minutes": 11.5504846
   }
 ]
