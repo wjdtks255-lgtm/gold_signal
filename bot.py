@@ -1,8 +1,8 @@
-# GOLD FUTURES SMART SIGNAL BOT V19.7.1 (Enhanced UI & NaN Safe)
+# GOLD FUTURES SMART SIGNAL BOT V19.7.3 (Professional Quant UI + TV Link & NaN Safe)
 import os,json,time,requests,yfinance as yf,pandas as pd,numpy as np
 from datetime import datetime,timezone,timedelta
 
-V="19.7.1"; T="GC=F"; STATE="signal_state.json"; LOG="bot_log.json"
+V="19.7.3"; T="GC=F"; STATE="signal_state.json"; LOG="bot_log.json"
 TOKEN=os.getenv("TELEGRAM_TOKEN",""); CHAT=os.getenv("TELEGRAM_CHAT_ID","")
 KST=timezone(timedelta(hours=9))
 
@@ -58,7 +58,7 @@ def tg(x):
     try:
         r=requests.post(
             f"https://api.telegram.org/bot{TOKEN}/sendMessage",
-            data={"chat_id":CHAT,"text":x,"parse_mode":"HTML"},
+            data={"chat_id":CHAT,"text":x,"parse_mode":"HTML","disable_web_page_preview":True},
             timeout=15)
         print("[TELEGRAM]","SENT" if r.ok else "FAIL")
         return r.ok
@@ -448,7 +448,7 @@ def backtest(x15,x5):
 
 
 # =========================================================
-# LIVE PRICE & ENHANCED ALERTS
+# LIVE PRICE & PROFESSIONAL QUANT ALERTS
 # =========================================================
 def live():
     try:
@@ -484,32 +484,50 @@ def live():
 
 def entry_alert(s,bt):
     d=s["direction"]
-    icon = "🟢 <b>LONG · 매수</b>" if d == "LONG" else "🔴 <b>SHORT · 매도</b>"
-    return f"""<b>✨ GOLD FUTURES · 어댑티브 신규 신호</b>
-━━━━━━━━━━━━━━━━━━━━
-{icon}
-━━━━━━━━━━━━━━━━━━━━
-🧠 감지 국면　<b>{s.get('regime','UNKNOWN')}</b>
-💰 추천 진입　<code>{m(s['entry'])}</code>
+    icon = "🟢 LONG POSITION (BUY)" if d == "LONG" else "🔴 SHORT POSITION (SELL)"
+    regime = s.get('regime', 'UNKNOWN')
+    
+    e = s['entry']
+    t1, t2, t3, sl = s['tp1'], s['tp2'], s['tp3'], s['sl']
+    
+    if d == "LONG":
+        r1 = (t1 / e - 1) * 100
+        r2 = (t2 / e - 1) * 100
+        r3 = (t3 / e - 1) * 100
+        rs_loss = (sl / e - 1) * 100
+    else:
+        r1 = (e / t1 - 1) * 100
+        r2 = (e / t2 - 1) * 100
+        r3 = (e / t3 - 1) * 100
+        rs_loss = (e / sl - 1) * 100
 
-<b>🎯 수익 목표 구간</b>
-├ <b>TP1</b>　<code>{m(s['tp1'])}</code>
-├ <b>TP2</b>　<code>{m(s['tp2'])}</code>
-└ <b>TP3</b>　<code>{m(s['tp3'])}</code>
+    tv_url = "https://www.tradingview.com/chart/?symbol=GC%2FUSD"
 
-<b>🛡 리스크 관리 (SL)</b>
-└ <b>손절선</b>　<code>{m(s['sl'])}</code>
+    return f"""⚡ <b>[GOLD FUTURES] ADAPTIVE QUANT SIGNAL</b>
+━━━━━━━━━━━━━━━━━━━━━━━
+🎯 <b>DIRECTION</b> : <b>{icon}</b>
+💎 <b>SETUP GRADE</b> : <b>{s['strength']}</b> (Score: <b>{s['score']}</b>/10)
+━━━━━━━━━━━━━━━━━━━━━━━
+📊 <b>MARKET CONTEXT & ENGINE</b>
+ • Market Regime : <code>{regime}</code>
+ • Entry Price   : <code>{m(e)}</code>
+ • Signal Engine : Multi-Strategy Confluence
 
-<b>📊 30일 사전 백테스트 성과</b>
-├ 거래 횟수　{bt['trades']}회
-├ 승률　　　{bt['winrate']:.1f}%
-├ Profit Factor　<b>{bt['profit_factor']:.2f}</b>
-└ 누적 결과　<b>{bt['net_r']:+.2f}R</b>
+🎯 <b>TARGET PRICE LADDER</b>
+ ├ <b>TP1</b> (50%) : <code>{m(t1)}</code> ({r1:+.2f}%)
+ ├ <b>TP2</b> (30%) : <code>{m(t2)}</code> ({r2:+.2f}%)
+ └ <b>TP3</b> (20%) : <code>{m(t3)}</code> ({r3:+.2f}%)
 
-🔥 종합 점수　<b>{s['score']}점 ({s['strength']})</b>
-━━━━━━━━━━━━━━━━━━━━
-⏱ <code>{now().strftime('%H:%M:%S KST')}</code>
-📌 <b>멀티 전략 엔진 구동 중</b>"""
+🛡 <b>RISK MANAGEMENT</b>
+ └ <b>Stop Loss</b> : <code>{m(sl)}</code> ({rs_loss:+.2f}%)
+
+📈 <b>30-DAY QUANT BACKTEST</b>
+ ├ Trades / WinRate : {bt['trades']}회 / {bt['winrate']:.1f}%
+ ├ Profit Factor    : <b>{bt['profit_factor']:.2f}</b>
+ └ Cumulative Return: <b>{bt['net_r']:+.2f}R</b>
+━━━━━━━━━━━━━━━━━━━━━━━
+🔗 <a href="{tv_url}"><b>TradingView Live Chart (GC=F)</b></a>
+⏱ <code>{now().strftime('%H:%M:%S KST')}</code> | Quant Engine Active"""
 
 def tp_alert(s,n,p):
     e=s["entry"]
