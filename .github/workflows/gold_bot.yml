@@ -41,18 +41,14 @@ jobs:
         run: |
           python bot.py
 
-      - name: Sync with remote main
+      - name: Sync remote changes
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
           git fetch origin main
 
-          git stash push -m "gold-bot-state" -- signal_state.json bot_log.json || true
-
-          git reset --hard origin/main
-
-          git stash pop || true
+          git rebase origin/main
 
       - name: Commit state and logs
         uses: stefanzweifel/git-auto-commit-action@v5
@@ -60,4 +56,3 @@ jobs:
           commit_message: "Update gold bot state and logs"
           file_pattern: "signal_state.json bot_log.json"
           branch: main
-          push_options: "--force-with-lease"
