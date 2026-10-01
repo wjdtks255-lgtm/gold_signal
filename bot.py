@@ -1,25 +1,25 @@
-# GOLD FUTURES SMART SIGNAL BOT V19.2 (Adaptive Bugfix)
+# GOLD FUTURES SMART SIGNAL BOT V19.3 (Adaptive Filter Tuning)
 import os,json,time,requests,yfinance as yf,pandas as pd,numpy as np
 from datetime import datetime,timezone,timedelta
 
-V="19.2.0"; T="GC=F"; STATE="signal_state.json"; LOG="bot_log.json"
+V="19.3.0"; T="GC=F"; STATE="signal_state.json"; LOG="bot_log.json"
 TOKEN=os.getenv("TELEGRAM_TOKEN",""); CHAT=os.getenv("TELEGRAM_CHAT_ID","")
 KST=timezone(timedelta(hours=9))
 
 # ===== ADAPTIVE STRATEGY PARAMS =====
-ADX_TREND_MIN = 22
-RSI_L=(52,68); RSI_S=(32,48); BODY=.35
+ADX_TREND_MIN = 24  # 추세 필터 강화 (기존 22 -> 24)
+RSI_L=(52,68); RSI_S=(32,48); BODY=.38
 
 # ===== RISK =====
 RISK_ATR=1.8; MIN_RISK=1.2; MAX_RISK=2.8
 TP=(1.2,2.0,3.0); STRONG_TP=(1.3,2.2,3.5)
 
-# ===== BACKTEST (최적화된 유연한 임계값) =====
+# ===== BACKTEST (필터 최적화) =====
 BT_PERIOD="30d"
-BT_MIN_TRADES=10
-BT_MIN_WINRATE=35.0
-BT_MIN_PF=0.95
-BT_MAX_DD=35.0
+BT_MIN_TRADES=8
+BT_MIN_WINRATE=30.0  # 시장 상황 반영 30%로 조정
+BT_MIN_PF=0.90
+BT_MAX_DD=40.0
 
 # ===== LIVE =====
 PRICE_MAX_AGE=8
@@ -317,7 +317,7 @@ def backtest(x15,x5):
                 best_d = d
                 best_regime = regime
 
-        threshold = 5.5 if best_regime == "TREND" else 4.5
+        threshold = 6.0 if best_regime == "TREND" else 5.0  # 기준 상향하여 노이즈 제거
         if not best_d or best_score < threshold:
             continue
 
@@ -330,7 +330,7 @@ def backtest(x15,x5):
         if len(q)<20:continue
 
         e,sl,risk=levels(x15,best_d,i)
-        strong=best_score >= 8.0
+        strong=best_score >= 8.5
         t1,t2,t3=targets(e,risk,strong,best_d)
 
         result=None; exit_price=None
@@ -606,13 +606,13 @@ def main():
             best_d = d
             best_regime = regime
 
-    threshold = 5.5 if best_regime == "TREND" else 4.5
+    threshold = 6.0 if best_regime == "TREND" else 5.0
     if not best_d or best_score < threshold:
         print(f"[SIGNAL] No qualified setup (Score: {best_score}, Regime: {best_regime})")
         return
 
     e,sl,risk=levels(x15,best_d,-1)
-    strong=best_score >= 8.0
+    strong=best_score >= 8.5
     t1,t2,t3=targets(e,risk,strong,best_d)
 
     sig={
