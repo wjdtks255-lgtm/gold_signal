@@ -8,7 +8,7 @@
   "tp2": 4211.57,
   "tp3": 4216.4,
   "risk": 4.83,
-  "tp1_hit": false,
+  "tp1_hit": true,
   "tp2_hit": false,
   "tp3_hit": false,
   "signal_time": "2026-10-01T13:37:46.650526+09:00",
