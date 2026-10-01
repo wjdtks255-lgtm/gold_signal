@@ -1414,5 +1414,10 @@
     "time": "2026-10-01T23:21:24.462321+09:00",
     "event": "MONITOR_BLOCK_STALE_1M",
     "delay_minutes": 10.407699266666667
+  },
+  {
+    "time": "2026-10-01T23:26:31.121286+09:00",
+    "event": "MONITOR_BLOCK_STALE_1M",
+    "delay_minutes": 10.518681066666666
   }
 ]
