@@ -1,584 +1,701 @@
-# GOLD FUTURES SMART SIGNAL BOT V17.5.0
-import os,json,time,hashlib,requests,yfinance as yf
-import pandas as pd,numpy as np
+# GOLD FUTURES SMART SIGNAL BOT V18.0
+import os,json,time,requests,yfinance as yf,pandas as pd,numpy as np
 from datetime import datetime,timezone,timedelta
 
-V="17.5.0"; TICKER="GC=F"
-STATE="signal_state.json"; LOG="bot_log.json"
+V="18.0.0"; T="GC=F"; STATE="signal_state.json"; LOG="bot_log.json"
 TOKEN=os.getenv("TELEGRAM_TOKEN",""); CHAT=os.getenv("TELEGRAM_CHAT_ID","")
 KST=timezone(timedelta(hours=9))
 
-# =========================
-# SETTINGS
-# =========================
-MIN_M15=7; STRONG_M15=8; MIN_5M=3; MIN_ADX=17
-MIN_ATR=.5; MAX_ATR=20; BODY=.35; MAX_DIST=1.2
-LONG_RSI=(52,68); SHORT_RSI=(32,48)
+# ===== SIGNAL =====
+M15_MIN=7; FIVE_MIN=3; ADX_MIN=17; ATR_MIN=.5; ATR_MAX=20
+RSI_L=(52,68); RSI_S=(32,48); BODY=.35; DIST=1.2
 
+# ===== RISK =====
 RISK_ATR=1.8; MIN_RISK=1.2; MAX_RISK=2.8
-TP=(1.2,2.0,3.0); STP=(1.3,2.2,3.5)
+TP=(1.2,2.0,3.0); STRONG_TP=(1.3,2.2,3.5)
 
-SIG_CD=45; SL_CD=120; TP3_CD=15
-FRESH_1M=8; FRESH_5M=15; FRESH_15M=30; FRESH_1H=90
-EMERGENCY_MAX=30
+# ===== BACKTEST =====
+BT_PERIOD="60d"
+BT_MIN_TRADES=20
+BT_MIN_WINRATE=45.0
+BT_MIN_PF=1.05
+BT_MAX_DD=25.0
 
-# =========================
-# BASIC
-# =========================
+# ===== LIVE =====
+PRICE_MAX_AGE=8
+COOLDOWN=45
+
+
 def now():
     return datetime.now(KST)
 
 def ts():
     return now().strftime("%Y-%m-%d %H:%M:%S")
 
-def money(x):
+def m(x):
     return f"${float(x):,.2f}"
 
-def pct(x):
-    return f"{float(x):+.2f}%"
+def save(p,x):
+    q=p+".tmp"
+    with open(q,"w",encoding="utf8") as f:
+        json.dump(x,f,ensure_ascii=False,indent=2)
+    os.replace(q,p)
 
-def save_json(path,obj):
-    tmp=path+".tmp"
-    with open(tmp,"w",encoding="utf-8") as f:
-        json.dump(obj,f,ensure_ascii=False,indent=2)
-    os.replace(tmp,path)
-
-def load_json(path,default):
+def load(p,d):
     try:
-        with open(path,encoding="utf-8") as f:return json.load(f)
-    except:return default
+        with open(p,encoding="utf8") as f:return json.load(f)
+    except:return d
 
-def telegram(msg):
+def tg(x):
     if not TOKEN or not CHAT:return False
     try:
         r=requests.post(
             f"https://api.telegram.org/bot{TOKEN}/sendMessage",
-            data={"chat_id":CHAT,"text":msg,"parse_mode":"HTML"},
+            data={"chat_id":CHAT,"text":x,"parse_mode":"HTML"},
             timeout=15)
-        ok=r.ok
-        print("[TELEGRAM]", "SENT" if ok else f"FAIL {r.status_code}")
-        return ok
+        print("[TELEGRAM]","SENT" if r.ok else "FAIL")
+        return r.ok
     except Exception as e:
-        print("[TELEGRAM ERROR]",e); return False
+        print("[TG ERROR]",e)
+        return False
 
-# =========================
+def log(t,**x):
+    a=load(LOG,[])
+    if not isinstance(a,list):a=[]
+    a.append({"time":ts(),"type":t,**x})
+    save(LOG,a[-500:])
+
+
+# =========================================================
 # STATE
-# =========================
-def default_state():
+# =========================================================
+def default():
     return {
         "version":V,"status":"IDLE","direction":None,
         "entry":None,"sl":None,"tp1":None,"tp2":None,"tp3":None,
-        "stage":"INITIAL","signal_time":None,"exit_time":None,
+        "stage":"INITIAL","signal_time":None,
         "exit_price":None,"exit_reason":None,
-        "score":0,"strength":"NORMAL",
-        "last_signal":None,"last_sl":None,"last_tp3":None
+        "score":0,"strength":"NORMAL","setup_hash":None,
+        "backtest":{}
     }
 
-def state_load():
-    s=load_json(STATE,default_state())
-    d=default_state()
-    d.update(s)
-
-    old=s.get("version",V)
-    if old!=V:
-        print(f"[STATE MIGRATION] {old} -> {V}")
-
-    # legacy stage migration
-    if d.get("status")=="ACTIVE":
-        if d.get("tp2_hit") and d.get("stage") in ("INITIAL","TP1_TRAIL"):
-            d["stage"]="TP2_TRAIL"
-        elif d.get("tp1_hit") and d.get("stage")=="INITIAL":
-            d["stage"]="TP1_TRAIL"
-
-    d["version"]=V
-    save_json(STATE,d)
+def get_state():
+    s=load(STATE,default())
+    d=default(); d.update(s); d["version"]=V
+    if s.get("version")!=V:
+        print(f"[STATE MIGRATION] {s.get('version')} -> {V}")
+    save(STATE,d)
     return d
 
-def state_print(s):
-    print("\n====================================")
-    print("STATE")
-    print("Status    :",s.get("status"))
-    print("Direction :",s.get("direction"))
-    print("Entry     :",s.get("entry"))
-    print("SL        :",s.get("sl"))
-    print("TP1       :",s.get("tp1"))
-    print("TP2       :",s.get("tp2"))
-    print("TP3       :",s.get("tp3"))
-    print("Stage     :",s.get("stage"))
-    print("====================================\n")
+def show(s):
+    print("\n===== STATE =====")
+    for k in ["status","direction","entry","sl","tp1","tp2","tp3","stage"]:
+        print(f"{k:10}: {s.get(k)}")
+    print("=================\n")
 
-def log_event(kind,data):
-    x=load_json(LOG,[])
-    if not isinstance(x,list):x=[]
-    x.append({"time":ts(),"type":kind,**data})
-    save_json(LOG,x[-500:])
 
-# =========================
+# =========================================================
 # DATA
-# =========================
-def clean(df):
-    if df is None or df.empty:return pd.DataFrame()
-    if isinstance(df.columns,pd.MultiIndex):
-        df.columns=df.columns.get_level_values(0)
-    df=df.copy()
+# =========================================================
+def clean(x):
+    if x is None or x.empty:return pd.DataFrame()
+    if isinstance(x.columns,pd.MultiIndex):
+        x.columns=x.columns.get_level_values(0)
+    x=x.copy()
     for c in ["Open","High","Low","Close","Volume"]:
-        if c in df:df[c]=pd.to_numeric(df[c],errors="coerce")
-    df=df.dropna(subset=["Open","High","Low","Close"])
-    if df.index.tz is None:df.index=df.index.tz_localize("UTC")
-    return df
+        if c in x:x[c]=pd.to_numeric(x[c],errors="coerce")
+    x=x.dropna(subset=["Open","High","Low","Close"])
+    if x.index.tz is None:x.index=x.index.tz_localize("UTC")
+    return x
 
-def data(tf,period,retry=3):
-    for i in range(retry):
+def getdata(tf,period):
+    for i in range(3):
         try:
-            print(f"[DATA] {tf} attempt {i+1}/{retry}")
-            x=clean(yf.download(TICKER,period=period,interval=tf,
-                                progress=False,auto_adjust=False,threads=False))
-            if len(x):
-                # 마지막 미완성 캔들 제거
-                x=x.iloc[:-1] if len(x)>3 else x
-                print(f"[DATA] {tf} {len(x)} rows")
-                return x
-        except Exception as e:print("[DATA ERROR]",tf,e)
+            x=clean(yf.download(
+                T,period=period,interval=tf,
+                progress=False,auto_adjust=False,threads=False))
+            if len(x)>50:
+                return x.iloc[:-1]
+        except Exception as e:
+            print("[DATA ERROR]",tf,e)
         time.sleep(1)
     return pd.DataFrame()
 
-def age(df):
-    if df.empty:return 9999
-    t=df.index[-1]
+def age(x):
+    if x.empty:return 9999
+    t=x.index[-1]
     if t.tzinfo is None:t=t.tz_localize("UTC")
     return max(0,(datetime.now(timezone.utc)-t).total_seconds()/60)
 
-def download_all():
-    return {
-        "1m":data("1m","7d"),
-        "5m":data("5m","30d"),
-        "15m":data("15m","60d"),
-        "1h":data("1h","90d")
-    }
 
-# =========================
+# =========================================================
 # INDICATORS
-# =========================
-def atr(df,n=14):
-    h,l,c=df.High,df.Low,df.Close
-    tr=pd.concat([h-l,(h-c.shift()).abs(),(l-c.shift()).abs()],axis=1).max(axis=1)
-    return tr.rolling(n).mean()
-
-def adx(df,n=14):
-    h,l,c=df.High,df.Low,df.Close
-    up=h.diff(); dn=-l.diff()
-    plus=up.where((up>dn)&(up>0),0)
-    minus=dn.where((dn>up)&(dn>0),0)
-    tr=pd.concat([h-l,(h-c.shift()).abs(),(l-c.shift()).abs()],axis=1).max(axis=1)
-    a=tr.rolling(n).mean()
-    p=100*plus.rolling(n).mean()/a
-    m=100*minus.rolling(n).mean()/a
-    dx=100*(p-m).abs()/(p+m).replace(0,np.nan)
-    return dx.rolling(n).mean()
-
-def ind(df):
-    x=df.copy()
+# =========================================================
+def addind(x):
+    x=x.copy()
     x["ema20"]=x.Close.ewm(span=20,adjust=False).mean()
     x["ema50"]=x.Close.ewm(span=50,adjust=False).mean()
+
     d=x.Close.diff()
-    gain=d.clip(lower=0).rolling(14).mean()
-    loss=(-d.clip(upper=0)).rolling(14).mean()
-    rs=gain/loss.replace(0,np.nan)
-    x["rsi"]=100-(100/(1+rs))
-    x["atr"]=atr(x)
-    x["adx"]=adx(x)
+    g=d.clip(lower=0).rolling(14).mean()
+    l=(-d.clip(upper=0)).rolling(14).mean()
+    rs=g/l.replace(0,np.nan)
+    x["rsi"]=100-100/(1+rs)
+
+    tr=pd.concat([
+        x.High-x.Low,
+        (x.High-x.Close.shift()).abs(),
+        (x.Low-x.Close.shift()).abs()],axis=1).max(axis=1)
+
+    x["atr"]=tr.rolling(14).mean()
+
+    up=x.High.diff()
+    dn=-x.Low.diff()
+    plus=up.where((up>dn)&(up>0),0)
+    minus=dn.where((dn>up)&(dn>0),0)
+    a=tr.rolling(14).mean()
+    p=100*plus.rolling(14).mean()/a
+    n=100*minus.rolling(14).mean()/a
+    dx=100*(p-n).abs()/(p+n).replace(0,np.nan)
+    x["adx"]=dx.rolling(14).mean()
+
     x["body"]=(x.Close-x.Open).abs()/(x.High-x.Low).replace(0,np.nan)
     x["pos"]=(x.Close-x.Low)/(x.High-x.Low).replace(0,np.nan)
     return x.dropna()
 
-# =========================
-# SCORING
-# =========================
-def score15(x,d):
-    r=x.iloc[-1]; p=x.iloc[-2]; s=0
-    if d=="LONG":
-        if r.Close>r.ema20:s+=1
-        if r.ema20>r.ema50:s+=1
-        if r.Close>p.High:s+=1
-        if r.Close>r.Open and r.body>=BODY:s+=1
-        if 52<=r.rsi<=68:s+=1
-        if r.adx>=MIN_ADX:s+=1
-        if r.pos>=.65:s+=1
-        if r.Close<=r.ema20+r.atr*MAX_DIST:s+=1
-    else:
-        if r.Close<r.ema20:s+=1
-        if r.ema20<r.ema50:s+=1
-        if r.Close<p.Low:s+=1
-        if r.Close<r.Open and r.body>=BODY:s+=1
-        if 32<=r.rsi<=48:s+=1
-        if r.adx>=MIN_ADX:s+=1
-        if r.pos<=.35:s+=1
-        if r.Close>=r.ema20-r.atr*MAX_DIST:s+=1
-    return s
 
-def score5(x,d):
-    r=x.iloc[-1];s=0
-    if d=="LONG":
-        if r.Close>r.ema20:s+=1
-        if r.Close>r.Open and r.body>=BODY:s+=1
-        if r.rsi>=50:s+=1
-        if r.adx>=MIN_ADX:s+=1
-    else:
-        if r.Close<r.ema20:s+=1
-        if r.Close<r.Open and r.body>=BODY:s+=1
-        if r.rsi<=50:s+=1
-        if r.adx>=MIN_ADX:s+=1
-    return s
+# =========================================================
+# SIGNAL SCORE
+# =========================================================
+def score15(x,d,i=-1):
+    r=x.iloc[i]; p=x.iloc[i-1]; s=0
 
-def h1trend(x,d):
-    r=x.iloc[-1]
+    if d=="LONG":
+        s+=r.Close>r.ema20
+        s+=r.ema20>r.ema50
+        s+=r.Close>p.High
+        s+=r.Close>r.Open and r.body>=BODY
+        s+=RSI_L[0]<=r.rsi<=RSI_L[1]
+        s+=r.adx>=ADX_MIN
+        s+=r.pos>=.65
+        s+=r.Close<=r.ema20+r.atr*DIST
+    else:
+        s+=r.Close<r.ema20
+        s+=r.ema20<r.ema50
+        s+=r.Close<p.Low
+        s+=r.Close<r.Open and r.body>=BODY
+        s+=RSI_S[0]<=r.rsi<=RSI_S[1]
+        s+=r.adx>=ADX_MIN
+        s+=r.pos<=.35
+        s+=r.Close>=r.ema20-r.atr*DIST
+
+    return int(s)
+
+def score5(x,d,i=-1):
+    r=x.iloc[i];s=0
+    if d=="LONG":
+        s+=r.Close>r.ema20
+        s+=r.Close>r.Open and r.body>=BODY
+        s+=r.rsi>=50
+        s+=r.adx>=ADX_MIN
+    else:
+        s+=r.Close<r.ema20
+        s+=r.Close<r.Open and r.body>=BODY
+        s+=r.rsi<=50
+        s+=r.adx>=ADX_MIN
+    return int(s)
+
+def trend(x,d,i=-1):
+    r=x.iloc[i]
     return (r.Close>r.ema20 and r.ema20>r.ema50) if d=="LONG" else \
            (r.Close<r.ema20 and r.ema20<r.ema50)
 
-# =========================
-# PRICE
-# =========================
-def live_price():
-    print("[EMERGENCY PRICE] Starting multi-source price lookup")
 
-    # 1. fast_info
-    try:
-        fi=yf.Ticker(TICKER).fast_info
-        for k in ("last_price","regularMarketPrice"):
-            v=fi.get(k)
-            if v and float(v)>0:
-                print("[LIVE] fast_info",v)
-                return float(v),0,"fast_info"
-    except Exception as e:print("[LIVE ERROR]",e)
+# =========================================================
+# POSITION CALC
+# =========================================================
+def levels(x,d,i):
+    r=x.iloc[i]; e=float(r.Close); a=float(r.atr)
+    sw=x.iloc[max(0,i-7):i+1]
 
-    # 2. yfinance 1m
+    if d=="LONG":
+        sl0=float(sw.Low.min())-a*.25
+        risk=max(e-sl0,a*MIN_RISK)
+        risk=min(risk,a*MAX_RISK)
+        sl=e-risk
+    else:
+        sl0=float(sw.High.max())+a*.25
+        risk=max(sl0-e,a*MIN_RISK)
+        risk=min(risk,a*MAX_RISK)
+        sl=e+risk
+
+    return e,sl,risk
+
+def targets(e,risk,strong,d):
+    z=STRONG_TP if strong else TP
+    if d=="LONG":return [e+risk*q for q in z]
+    return [e-risk*q for q in z]
+
+
+# =========================================================
+# BACKTEST ENGINE
+# =========================================================
+def backtest(x15,x5):
+    print("\n====================================")
+    print(" HISTORICAL BACKTEST")
+    print("====================================")
+
+    if len(x15)<300 or len(x5)<300:
+        return {"pass":False,"reason":"INSUFFICIENT_DATA"}
+
+    # 15m signal과 가장 가까운 5m 시점 매칭
+    trades=[]
+    equity=0; peak=0; dd=0
+    wins=losses=0
+    gross_win=gross_loss=0
+
+    start=100
+    last_exit=-99
+
+    for i in range(start,len(x15)-20):
+        if i-last_exit<2:continue
+
+        d=None; a=score15(x15,"LONG",i); b=score15(x15,"SHORT",i)
+
+        if a>=M15_MIN and a>b:
+            d="LONG"
+        elif b>=M15_MIN and b>a:
+            d="SHORT"
+        else:
+            continue
+
+        r=x15.iloc[i]
+        if r.atr<ATR_MIN or r.atr>ATR_MAX or r.adx<ADX_MIN:
+            continue
+
+        # 5m confirmation: signal 시점 이전/동시 데이터
+        t=x15.index[i]
+        q=x5.loc[:t]
+        if len(q)<30:continue
+
+        j=len(q)-1
+        b5=score5(q,d,j)
+        if b5<FIVE_MIN:continue
+
+        strong=a>=8 and b5>=4
+        e,sl,risk=levels(x15,d,i)
+        t1,t2,t3=targets(e,risk,strong,d)
+
+        result=None; exit_price=None
+
+        # 다음 15m 캔들부터 순차 검사
+        for k in range(i+1,min(i+80,len(x15))):
+            c=x15.iloc[k]
+            hi=float(c.High);lo=float(c.Low)
+
+            if d=="LONG":
+                # 보수적으로 SL 우선
+                if lo<=sl:
+                    result="LOSS";exit_price=sl;break
+                if hi>=t1:
+                    # TP1 이후 SL=ENTRY
+                    sl2=e
+                    if lo<=sl2:
+                        result="BE";exit_price=e;break
+                    if hi>=t2:
+                        sl3=t1
+                        if lo<=sl3:
+                            result="TP1";exit_price=t1;break
+                        if hi>=t3:
+                            result="WIN";exit_price=t3;break
+            else:
+                if hi>=sl:
+                    result="LOSS";exit_price=sl;break
+                if lo<=t1:
+                    sl2=e
+                    if hi>=sl2:
+                        result="BE";exit_price=e;break
+                    if lo<=t2:
+                        sl3=t1
+                        if hi>=sl3:
+                            result="TP1";exit_price=t1;break
+                        if lo<=t3:
+                            result="WIN";exit_price=t3;break
+
+        if result is None:continue
+
+        if d=="LONG": ret=(exit_price-e)/risk
+        else: ret=(e-exit_price)/risk
+
+        trades.append(ret)
+        equity+=ret
+        peak=max(peak,equity)
+        dd=max(dd,peak-equity)
+        last_exit=k
+
+        if ret>0:
+            wins+=1;gross_win+=ret
+        elif ret<0:
+            losses+=1;gross_loss+=abs(ret)
+
+    n=len(trades)
+    if not n:
+        return {"pass":False,"reason":"NO_TRADES","trades":0}
+
+    wr=wins/n*100
+    pf=gross_win/gross_loss if gross_loss else 99
+    result={
+        "trades":n,
+        "wins":wins,
+        "losses":losses,
+        "winrate":round(wr,1),
+        "profit_factor":round(pf,2),
+        "max_drawdown":round(dd,2),
+        "net_r":round(sum(trades),2)
+    }
+
+    result["pass"]=(
+        n>=BT_MIN_TRADES and
+        wr>=BT_MIN_WINRATE and
+        pf>=BT_MIN_PF and
+        dd<=BT_MAX_DD)
+
+    print(f"Trades       : {n}")
+    print(f"Win Rate     : {wr:.1f}%")
+    print(f"Profit Factor: {pf:.2f}")
+    print(f"Max DD       : {dd:.2f}R")
+    print(f"Net Result   : {sum(trades):+.2f}R")
+    print("RESULT       :", "PASS" if result["pass"] else "FAIL")
+
+    return result
+
+
+# =========================================================
+# LIVE PRICE
+# =========================================================
+def live():
     try:
-        x=clean(yf.download(TICKER,period="1d",interval="1m",
-                            progress=False,auto_adjust=False,threads=False))
+        f=yf.Ticker(T).fast_info
+        for k in ["last_price","regularMarketPrice"]:
+            if f.get(k):
+                return float(f[k]),0,"FAST"
+    except:pass
+
+    try:
+        x=clean(yf.download(
+            T,period="1d",interval="1m",
+            progress=False,auto_adjust=False,threads=False))
         if not x.empty:
             t=x.index[-1]
             if t.tzinfo is None:t=t.tz_localize("UTC")
             a=(datetime.now(timezone.utc)-t).total_seconds()/60
-            v=float(x.Close.iloc[-1])
-            print(f"[EMERGENCY PRICE] history 1m = {money(v)} age={a:.1f}m")
-            return v,a,"yfinance_1m"
-    except Exception as e:print("[1M PRICE ERROR]",e)
+            return float(x.Close.iloc[-1]),a,"1M"
+    except:pass
 
-    # 3. Yahoo chart
-    try:
-        u=f"https://query1.finance.yahoo.com/v8/finance/chart/{TICKER}?interval=1m&range=1d"
-        z=requests.get(u,timeout=10,headers={"User-Agent":"Mozilla/5.0"}).json()["chart"]["result"][0]
-        q=z.get("indicators",{}).get("quote",[{}])[0].get("close",[])
-        tm=z.get("timestamp",[])
-        for i in range(len(q)-1,-1,-1):
-            if q[i] is not None:
-                t=datetime.fromtimestamp(tm[i],timezone.utc)
-                a=(datetime.now(timezone.utc)-t).total_seconds()/60
-                v=float(q[i])
-                print(f"[YAHOO] {money(v)} age={a:.1f}m")
-                return v,a,"yahoo_chart"
-    except Exception as e:print("[YAHOO ERROR]",e)
+    return None,9999,"NONE"
 
-    return None,9999,"none"
 
-# =========================
+# =========================================================
 # ALERTS
-# =========================
-def entry_msg(s,m15,five,h1):
-    d=s["direction"]; arrow="🟢 LONG · 매수" if d=="LONG" else "🔴 SHORT · 매도"
-    e=s["entry"]; sl=s["sl"]; t1=s["tp1"];t2=s["tp2"];t3=s["tp3"]
-    risk=abs(e-sl)
-    rr=abs(t3-e)/risk if risk else 0
-    r=m15.iloc[-1]
-    strength="🔥 STRONG" if s["strength"]=="STRONG" else "NORMAL"
+# =========================================================
+def entry_alert(s,bt):
+    d=s["direction"]
+    icon="🟢" if d=="LONG" else "🔴"
     return f"""<b>🟡 GOLD FUTURES · 신규 매매 신호</b>
 ━━━━━━━━━━━━━━━━━━━━
 
-<b>📌 {arrow}</b>
-💰 진입가　<b>{money(e)}</b>
+{icon} <b>{d} · {'매수' if d=='LONG' else '매도'}</b>
+💰 진입가　<b>{m(s['entry'])}</b>
 
 <b>🎯 목표가</b>
-├ TP1　{money(t1)} ({pct((t1/e-1)*100) if d=="LONG" else pct((e/t1-1)*100)})
-├ TP2　{money(t2)}
-└ TP3　{money(t3)}
+├ TP1　{m(s['tp1'])}
+├ TP2　{m(s['tp2'])}
+└ TP3　{m(s['tp3'])}
 
-<b>🛡 리스크 관리</b>
-└ 손절가　<b>{money(sl)}</b>
+<b>🛡 보호 손절</b>
+└ SL　 <b>{m(s['sl'])}</b>
 
-<b>📊 시장 분석</b>
-├ 15분 점수　{m15.attrs.get("score","-")}/8
-├ 5분 점수　 {five.attrs.get("score","-")}/4
-├ 1시간 추세　{"상승 정렬" if h1 and d=="LONG" else "하락 정렬" if h1 else "중립"}
-├ RSI　　　　{r.rsi:.1f}
-├ ADX　　　　{r.adx:.1f}
-└ ATR　　　　{r.atr:.2f}
+<b>📊 사전 백테스트</b>
+├ 거래 횟수　{bt['trades']}회
+├ 승률　　　{bt['winrate']:.1f}%
+├ Profit Factor　{bt['profit_factor']:.2f}
+└ 누적 결과　{bt['net_r']:+.2f}R
 
-🔥 신호 강도　<b>{strength}</b>
-📐 TP3 기준 R/R　1 : {rr:.2f}
+🔥 신호 강도　<b>{s['strength']}</b>
 
 ━━━━━━━━━━━━━━━━━━━━
-⏱ {now().strftime("%H:%M KST")}
-📌 포지션 추적 시작
+⏱ {now().strftime('%H:%M KST')}
+📌 자동 포지션 추적 시작
 ━━━━━━━━━━━━━━━━━━━━"""
 
-def tp_msg(s,n,price):
-    d=s["direction"]; p=s["entry"]
-    gain=(price/p-1)*100 if d=="LONG" else (p/price-1)*100
-    if n==1:
-        extra=f"🛡 손절가 → 진입가 {money(s['entry'])}"
-        stage="TP1 → TP2 추적"
-    elif n==2:
-        extra=f"🛡 손절가 → TP1 {money(s['tp1'])}"
-        stage="TP2 → TP3 추적"
-    else:
-        extra="🔓 포지션 추적 종료"
-        stage="거래 종료"
+
+def tp_alert(s,n,p):
+    e=s["entry"]
+    gain=(p/e-1)*100 if s["direction"]=="LONG" else (e/p-1)*100
+    sl=s["entry"] if n==1 else s["tp1"]
+    nxt="TP2" if n==1 else "TP3"
     return f"""<b>🟢 GOLD FUTURES · TP{n} 달성</b>
 ━━━━━━━━━━━━━━━━━━━━
 
-📈 {d} 포지션
-💰 진입가　{money(p)}
-🎯 TP{n}　　<b>{money(price)}</b>
+📈 {s['direction']} 포지션
+💰 진입가　{m(e)}
+🎯 TP{n}　　<b>{m(p)}</b>
 📈 누적 수익　<b>{gain:+.2f}%</b>
 
-{extra}
+🛡 보호 SL　{m(sl)}
+🎯 다음 목표　{nxt}
 
-📌 현재 단계　{stage}
-⏱ {now().strftime("%H:%M KST")}
-
+━━━━━━━━━━━━━━━━━━━━
+🔐 수익 보호 모드 유지
 ━━━━━━━━━━━━━━━━━━━━"""
 
-def sl_msg(s,price,age,source):
-    d=s["direction"]; e=s["entry"]
-    loss=(price/e-1)*100 if d=="LONG" else (e/price-1)*100
+
+def sl_alert(s,p,age,src):
+    e=s["entry"]
+    loss=(p/e-1)*100 if s["direction"]=="LONG" else (e/p-1)*100
     return f"""<b>🔴 GOLD FUTURES · 리스크 종료</b>
 ━━━━━━━━━━━━━━━━━━━━
 
-📉 {d} 포지션 · 보호 손절
+📉 {s['direction']} 포지션
 
-💰 진입가　　{money(e)}
-🛑 청산가　　<b>{money(price)}</b>
-📉 손익률　　<b>{loss:+.2f}%</b>
+💰 진입가　{m(e)}
+🛑 청산가　<b>{m(p)}</b>
+📉 손익률　<b>{loss:+.2f}%</b>
 
-📊 청산 정보
-├ 사유　　　보호 손절
-├ 가격来源　{source}
-└ 데이터 지연　{age:.1f}분
-
-📌 포지션 상태　CLOSED
-⏱ {now().strftime("%H:%M KST")}
+📡 가격 출처　{src}
+⏱ 데이터 지연　{age:.1f}분
 
 ━━━━━━━━━━━━━━━━━━━━
-⚠️ 리스크 관리 기준에 따른 자동 종료"""
-
-def stale_msg(s,price,age,source):
-    return f"""<b>⚠️ GOLD FUTURES · 가격 데이터 지연</b>
-━━━━━━━━━━━━━━━━━━━━
-
-현재 실시간 가격 데이터가 지연되어
-포지션 판정을 일시 보류합니다.
-
-📌 포지션　{s['direction']}
-💰 마지막 확인가　{money(price) if price else '조회 실패'}
-🛡 보호 SL　{money(s['sl'])}
-⏱ 데이터 지연　<b>{age:.1f}분</b>
-📡 출처　{source}
-
-━━━━━━━━━━━━━━━━━━━━
-⏳ 실시간 가격 재확인 중
+⚠️ 보호 손절 기준에 따른 자동 종료
 ━━━━━━━━━━━━━━━━━━━━"""
 
-# =========================
-# POSITION
-# =========================
-def close(s,price,reason):
-    s["status"]="IDLE";s["exit_price"]=price;s["exit_reason"]=reason
-    s["exit_time"]=ts();s["direction"]=None
-    s["entry"]=s["sl"]=s["tp1"]=s["tp2"]=s["tp3"]=None
-    s["stage"]="INITIAL"
-    save_json(STATE,s)
-    log_event("EXIT",{"price":price,"reason":reason})
 
-def hit_tp(s,n,price):
-    s["stage"]=f"TP{n}_TRAIL"
-    if n==1:s["sl"]=s["entry"]
-    elif n==2:s["sl"]=s["tp1"]
-    save_json(STATE,s)
-    telegram(tp_msg(s,n,price))
-    log_event("TP",{"level":n,"price":price})
+def stale_alert(s,p,a):
+    return f"""<b>⚠️ GOLD FUTURES · 가격 확인 지연</b>
+━━━━━━━━━━━━━━━━━━━━
 
-def monitor(s,df1):
-    d=s["direction"]
-    p,age,src=live_price()
+📌 포지션　{s['direction']}
+💰 최근 가격　{m(p) if p else '조회 실패'}
+🛡 보호 SL　{m(s['sl'])}
+⏱ 지연　　　{a:.1f}분
 
-    if p is None:
-        telegram(stale_msg(s,None,9999,"조회 실패"))
-        print("[MONITOR] Price unavailable")
+⏳ 실시간 가격 확보 후
+SL/TP 판정을 재개합니다.
+
+━━━━━━━━━━━━━━━━━━━━
+🔒 포지션 상태 유지
+━━━━━━━━━━━━━━━━━━━━"""
+
+
+# =========================================================
+# ACTIVE MONITOR
+# =========================================================
+def close(s,p,reason):
+    s.update({
+        "status":"IDLE","exit_price":p,
+        "exit_reason":reason,"direction":None,
+        "entry":None,"sl":None,"tp1":None,
+        "tp2":None,"tp3":None,"stage":"INITIAL"})
+    save(STATE,s)
+    log("EXIT",price=p,reason=reason)
+
+
+def monitor(s):
+    p,a,src=live()
+
+    if p is None or a>PRICE_MAX_AGE:
+        tg(stale_alert(s,p,a))
+        print(f"[MONITOR] STALE {a:.1f}m")
         return
 
-    # 가격이 8분 초과 지연이면 SL/TP 판정 금지
-    if age>FRESH_1M:
-        print(f"[MONITOR] PRICE STALE {age:.1f}m")
-        telegram(stale_msg(s,p,age,src))
-        return
+    d=s["direction"]; sl=s["sl"]; st=s["stage"]
 
-    print(f"[MONITOR] LIVE {money(p)} age={age:.1f}m")
-    sl=s["sl"];t1=s["tp1"];t2=s["tp2"];t3=s["tp3"]
-    st=s["stage"]
+    print(f"[LIVE] {m(p)} age={a:.1f}m stage={st}")
 
     if d=="LONG":
         if p<=sl:
-            telegram(sl_msg(s,p,age,src))
-            close(s,p,"SL")
-            return
-        if st=="INITIAL" and p>=t1:
-            hit_tp(s,1,p);return
-        if st=="TP1_TRAIL" and p>=t2:
-            hit_tp(s,2,p);return
-        if st=="TP2_TRAIL" and p>=t3:
-            telegram(tp_msg(s,3,p))
-            close(s,p,"TP3")
-            return
+            tg(sl_alert(s,p,a,src));close(s,p,"SL");return
+        if st=="INITIAL" and p>=s["tp1"]:
+            s["stage"]="TP1_TRAIL";s["sl"]=s["entry"]
+            save(STATE,s);tg(tp_alert(s,1,p));return
+        if st=="TP1_TRAIL" and p>=s["tp2"]:
+            s["stage"]="TP2_TRAIL";s["sl"]=s["tp1"]
+            save(STATE,s);tg(tp_alert(s,2,p));return
+        if st=="TP2_TRAIL" and p>=s["tp3"]:
+            tg(tp_alert(s,3,p));close(s,p,"TP3");return
+
     else:
         if p>=sl:
-            telegram(sl_msg(s,p,age,src))
-            close(s,p,"SL")
-            return
-        if st=="INITIAL" and p<=t1:
-            hit_tp(s,1,p);return
-        if st=="TP1_TRAIL" and p<=t2:
-            hit_tp(s,2,p);return
-        if st=="TP2_TRAIL" and p<=t3:
-            telegram(tp_msg(s,3,p))
-            close(s,p,"TP3")
-            return
+            tg(sl_alert(s,p,a,src));close(s,p,"SL");return
+        if st=="INITIAL" and p<=s["tp1"]:
+            s["stage"]="TP1_TRAIL";s["sl"]=s["entry"]
+            save(STATE,s);tg(tp_alert(s,1,p));return
+        if st=="TP1_TRAIL" and p<=s["tp2"]:
+            s["stage"]="TP2_TRAIL";s["sl"]=s["tp1"]
+            save(STATE,s);tg(tp_alert(s,2,p));return
+        if st=="TP2_TRAIL" and p<=s["tp3"]:
+            tg(tp_alert(s,3,p));close(s,p,"TP3");return
 
-# =========================
-# SIGNAL
-# =========================
-def setup(dfs):
-    m15=ind(dfs["15m"]); f5=ind(dfs["5m"]); h1=ind(dfs["1h"])
-    if min(map(len,[m15,f5,h1]))<60:return None
+
+# =========================================================
+# LIVE SIGNAL
+# =========================================================
+def signal(x15,x5):
+    if len(x15)<100 or len(x5)<100:return None
 
     best=None
-    for d in ("LONG","SHORT"):
-        a=score15(m15,d);b=score5(f5,d);ht=h1trend(h1,d)
-        if a<MIN_M15 or b<MIN_5M:continue
-        if a<MIN_M15 or a>8:continue
-        r=m15.iloc[-1]
-        if r.atr<MIN_ATR or r.atr>MAX_ATR or r.adx<MIN_ADX:continue
-        if d=="LONG" and not(LONG_RSI[0]<=r.rsi<=LONG_RSI[1]):continue
-        if d=="SHORT" and not(SHORT_RSI[0]<=r.rsi<=SHORT_RSI[1]):continue
-        total=a*10+b*2+(1 if ht else 0)
+
+    for d in ["LONG","SHORT"]:
+        a=score15(x15,d)
+        if a<M15_MIN:continue
+
+        q=x5.loc[:x15.index[-1]]
+        if len(q)<30:continue
+        b=score5(q,d)
+
+        if b<FIVE_MIN:continue
+
+        r=x15.iloc[-1]
+        if r.atr<ATR_MIN or r.atr>ATR_MAX or r.adx<ADX_MIN:continue
+
+        if d=="LONG" and not RSI_L[0]<=r.rsi<=RSI_L[1]:continue
+        if d=="SHORT" and not RSI_S[0]<=r.rsi<=RSI_S[1]:continue
+
+        total=a*10+b*2+(1 if trend(x15,d) else 0)
+
         if best is None or total>best[0]:
-            best=(total,d,a,b,ht,m15,f5,h1)
+            best=(total,d,a,b)
 
     if not best:return None
-    total,d,a,b,ht,m15,f5,h1=best
-    r=m15.iloc[-1];entry=float(r.Close)
-    atrv=float(r.atr)
 
-    # 최근 스윙 + ATR 기반 SL
-    if d=="LONG":
-        swing=float(m15.Low.tail(8).min())
-        raw=entry-(entry-swing+atrv*.25)
-        risk=entry-raw
-        risk=max(risk,atrv*MIN_RISK)
-        risk=min(risk,atrv*MAX_RISK)
-        sl=entry-risk
-        mult=STP if a>=STRONG_M15 and b>=4 else TP
-        t1,t2,t3=[entry+risk*x for x in mult]
-    else:
-        swing=float(m15.High.tail(8).max())
-        raw=entry+(swing-entry+atrv*.25)
-        risk=raw-entry
-        risk=max(risk,atrv*MIN_RISK)
-        risk=min(risk,atrv*MAX_RISK)
-        sl=entry+risk
-        mult=STP if a>=STRONG_M15 and b>=4 else TP
-        t1,t2,t3=[entry-risk*x for x in mult]
+    total,d,a,b=best
+    e,sl,risk=levels(x15,d,-1)
+    strong=a>=8 and b>=4
+    t1,t2,t3=targets(e,risk,strong,d)
 
-    strength="STRONG" if a>=STRONG_M15 and b>=4 else "NORMAL"
-    key=f"{d}-{round(entry,1)}-{a}-{b}-{round(r.rsi,1)}"
     return {
-        "direction":d,"entry":entry,"sl":sl,
-        "tp1":t1,"tp2":t2,"tp3":t3,
+        "status":"ACTIVE","direction":d,
+        "entry":e,"sl":sl,"tp1":t1,"tp2":t2,"tp3":t3,
         "stage":"INITIAL","score":total,
-        "strength":strength,"signal_time":ts(),
-        "setup_hash":hashlib.md5(key.encode()).hexdigest(),
-        "_m15":m15,"_5m":f5,"_h1":h1
+        "strength":"STRONG" if strong else "NORMAL",
+        "signal_time":ts()
     }
 
-def send_entry(s):
-    m15=s.pop("_m15");f5=s.pop("_5m");h1=s.pop("_h1")
-    m15.attrs["score"]=int(score15(m15,s["direction"]))
-    f5.attrs["score"]=int(score5(f5,s["direction"]))
-    telegram(entry_msg(s,m15,m15.attrs["score"],h1trend(h1,s["direction"])))
-    save_json(STATE,s)
-    log_event("ENTRY",{"direction":s["direction"],"entry":s["entry"]})
 
-# =========================
+# =========================================================
 # MAIN
-# =========================
+# =========================================================
 def main():
     print("====================================")
     print(f" GOLD FUTURES SMART SIGNAL BOT V{V}")
     print(" KST:",now().isoformat())
     print("====================================")
 
-    s=state_load()
-    state_print(s)
+    s=get_state()
+    show(s)
 
-    dfs=download_all()
-    ages={k:age(v) for k,v in dfs.items()}
-    for k,v in ages.items():print(f"[DATA FRESHNESS] {k.upper()}: {v:.1f} min")
-
+    # ACTIVE는 백테스트와 무관하게 추적
     if s["status"]=="ACTIVE":
-        print("[POSITION] ACTIVE position detected")
-        if ages["1m"]>FRESH_1M:
-            print(f"[MONITOR MODE] EMERGENCY / 1M stale {ages['1m']:.1f}m")
-        else:
-            print("[MONITOR MODE] PRECISE")
-        monitor(s,dfs["1m"])
-        state_print(state_load())
-        print("[DONE] Active position monitoring complete")
+        print("[POSITION] ACTIVE")
+        monitor(s)
+        show(get_state())
         return
 
-    # 신규 진입에는 모든 핵심 데이터가 너무 오래되면 진입 금지
-    if ages["15m"]>FRESH_15M or ages["5m"]>FRESH_5M:
-        print("[ENTRY BLOCK] Market data stale")
+    print("[DATA] Loading historical market data...")
+    x15=addind(getdata("15m",BT_PERIOD))
+    x5=addind(getdata("5m",BT_PERIOD))
+
+    print(f"[DATA] 15M={len(x15)} 5M={len(x5)}")
+    print(f"[FRESHNESS] 15M={age(x15):.1f}m 5M={age(x5):.1f}m")
+
+    # ==========================================
+    # 1. 반드시 백테스트 먼저
+    # ==========================================
+    bt=backtest(x15,x5)
+    s["backtest"]=bt
+    save(STATE,s)
+
+    if not bt.get("pass"):
+        print("[ENTRY] BACKTEST FAILED")
+        tg(f"""<b>🟠 GOLD FUTURES · 신규 진입 보류</b>
+━━━━━━━━━━━━━━━━━━━━
+
+📊 사전 백테스트 결과
+
+├ 거래 횟수　{bt.get('trades',0)}회
+├ 승률　　　{bt.get('winrate',0):.1f}%
+├ Profit Factor　{bt.get('profit_factor',0):.2f}
+├ 최대 DD　 {bt.get('max_drawdown',0):.2f}R
+└ 결과　　　<b>조건 미충족</b>
+
+📌 기존 포지션은 정상적으로 추적됩니다.
+━━━━━━━━━━━━━━━━━━━━""")
         return
 
-    sig=setup(dfs)
+    print("[ENTRY] BACKTEST PASSED")
+
+    # ==========================================
+    # 2. 실시간 가격 확인
+    # ==========================================
+    p,a,src=live()
+
+    if p is None:
+        print("[ENTRY] LIVE PRICE UNAVAILABLE")
+        return
+
+    print(f"[LIVE PRICE] {m(p)} age={a:.1f}m source={src}")
+
+    # fast_info는 timestamp가 없을 수 있으므로
+    # 가격 괴리만 확인하고 지나치게 오래된 1m 가격은 차단
+    if a>PRICE_MAX_AGE and src!="FAST":
+        print("[ENTRY] LIVE PRICE STALE")
+        return
+
+    # ==========================================
+    # 3. 현재 신호 분석
+    # ==========================================
+    sig=signal(x15,x5)
+
     if not sig:
         print("[SIGNAL] No qualified setup")
         return
 
-    # 중복 신호 방지
-    if s.get("last_signal")==sig["setup_hash"]:
-        print("[SIGNAL] Duplicate setup")
+    # 현재가와 분석 진입가 괴리 검사
+    dist=abs(p-sig["entry"])/sig["entry"]*100
+
+    if dist>0.35:
+        print(f"[ENTRY BLOCK] Price deviation {dist:.2f}%")
         return
 
-    sig["status"]="ACTIVE"
-    sig["last_signal"]=sig["setup_hash"]
     s.update(sig)
-    send_entry(s)
+    save(STATE,s)
+
+    tg(entry_alert(s,bt))
+    log("ENTRY",
+        direction=s["direction"],
+        entry=s["entry"],
+        score=s["score"],
+        strength=s["strength"],
+        backtest=bt)
+
+    print("[ENTRY] POSITION CREATED")
+    show(s)
+
 
 if __name__=="__main__":
     try:
         main()
     except Exception as e:
         print("[FATAL]",repr(e))
+        log("FATAL",error=repr(e))
         try:
-            log_event("FATAL",{"error":repr(e)})
-            telegram(f"""<b>⚠️ GOLD FUTURES · 시스템 오류</b>
+            tg(f"""<b>⚠️ GOLD FUTURES · 시스템 오류</b>
 ━━━━━━━━━━━━━━━━━━━━
 
-자동매매 신호 시스템에서
-예외가 발생했습니다.
+자동 분석 과정에서 오류가 발생했습니다.
 
 ⏱ {ts()}
-🔧 오류: <code>{str(e)[:500]}</code>
+🔧 <code>{str(e)[:400]}</code>
 
 📌 기존 포지션 상태는 보존됩니다.
 ━━━━━━━━━━━━━━━━━━━━""")
