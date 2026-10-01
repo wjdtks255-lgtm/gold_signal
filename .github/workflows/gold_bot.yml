@@ -18,22 +18,34 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      # =========================
+      # CHECKOUT
+      # =========================
       - name: Checkout
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
           ref: main
 
+      # =========================
+      # PYTHON
+      # =========================
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.10"
 
+      # =========================
+      # DEPENDENCIES
+      # =========================
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install requests yfinance pandas numpy
 
+      # =========================
+      # RUN BOT
+      # =========================
       - name: Run Gold Signal Bot
         env:
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
@@ -41,15 +53,9 @@ jobs:
         run: |
           python bot.py
 
-      - name: Sync remote changes
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
-          git fetch origin main
-
-          git rebase origin/main
-
+      # =========================
+      # SAVE STATE
+      # =========================
       - name: Commit state and logs
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
