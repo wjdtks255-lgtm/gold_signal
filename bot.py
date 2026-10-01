@@ -1,8 +1,8 @@
-# GOLD FUTURES SMART SIGNAL BOT V19.1 (Adaptive Optimized)
+# GOLD FUTURES SMART SIGNAL BOT V19.2 (Adaptive Bugfix)
 import os,json,time,requests,yfinance as yf,pandas as pd,numpy as np
 from datetime import datetime,timezone,timedelta
 
-V="19.1.0"; T="GC=F"; STATE="signal_state.json"; LOG="bot_log.json"
+V="19.2.0"; T="GC=F"; STATE="signal_state.json"; LOG="bot_log.json"
 TOKEN=os.getenv("TELEGRAM_TOKEN",""); CHAT=os.getenv("TELEGRAM_CHAT_ID","")
 KST=timezone(timedelta(hours=9))
 
@@ -359,8 +359,10 @@ def backtest(x15,x5):
                     sl2=e
                     if hi>=sl2:
                         result="BE";exit_price=e;break
-                    if lo<=sl3:
-                        result="TP1";exit_price=t1;break
+                    if lo<=t2:
+                        sl3=t1
+                        if hi>=sl3:
+                            result="TP1";exit_price=t1;break
                         if lo<=t3:
                             result="WIN";exit_price=t3;break
 
