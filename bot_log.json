@@ -1515,5 +1515,23 @@
       "net_r": -3.65,
       "pass": true
     }
+  },
+  {
+    "time": "2026-10-02 02:26:59",
+    "type": "ENTRY",
+    "direction": "LONG",
+    "entry": 4201.39990234375,
+    "score": 9.4,
+    "regime": "RANGE",
+    "backtest": {
+      "trades": 82,
+      "wins": 24,
+      "losses": 50,
+      "winrate": 29.3,
+      "profit_factor": 1.15,
+      "max_drawdown": 15.75,
+      "net_r": 7.66,
+      "pass": true
+    }
   }
 ]
