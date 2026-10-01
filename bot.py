@@ -1,8 +1,8 @@
-# GOLD FUTURES SMART SIGNAL BOT V18.0
+# GOLD FUTURES SMART SIGNAL BOT V18.1
 import os,json,time,requests,yfinance as yf,pandas as pd,numpy as np
 from datetime import datetime,timezone,timedelta
 
-V="18.0.0"; T="GC=F"; STATE="signal_state.json"; LOG="bot_log.json"
+V="18.1.0"; T="GC=F"; STATE="signal_state.json"; LOG="bot_log.json"
 TOKEN=os.getenv("TELEGRAM_TOKEN",""); CHAT=os.getenv("TELEGRAM_CHAT_ID","")
 KST=timezone(timedelta(hours=9))
 
@@ -24,6 +24,7 @@ BT_MAX_DD=25.0
 # ===== LIVE =====
 PRICE_MAX_AGE=8
 COOLDOWN=45
+FAIL_ALERT_COOLDOWN = 4 * 3600  # 백테스트 실패 알림 쿨다운 (4시간, 초 단위)
 
 
 def now():
@@ -76,7 +77,7 @@ def default():
         "stage":"INITIAL","signal_time":None,
         "exit_price":None,"exit_reason":None,
         "score":0,"strength":"NORMAL","setup_hash":None,
-        "backtest":{}
+        "backtest":{}, "last_fail_alert_time": 0
     }
 
 def get_state():
@@ -248,7 +249,6 @@ def backtest(x15,x5):
     if len(x15)<300 or len(x5)<300:
         return {"pass":False,"reason":"INSUFFICIENT_DATA"}
 
-    # 15m signal과 가장 가까운 5m 시점 매칭
     trades=[]
     equity=0; peak=0; dd=0
     wins=losses=0
@@ -273,7 +273,6 @@ def backtest(x15,x5):
         if r.atr<ATR_MIN or r.atr>ATR_MAX or r.adx<ADX_MIN:
             continue
 
-        # 5m confirmation: signal 시점 이전/동시 데이터
         t=x15.index[i]
         q=x5.loc[:t]
         if len(q)<30:continue
@@ -288,17 +287,14 @@ def backtest(x15,x5):
 
         result=None; exit_price=None
 
-        # 다음 15m 캔들부터 순차 검사
         for k in range(i+1,min(i+80,len(x15))):
             c=x15.iloc[k]
             hi=float(c.High);lo=float(c.Low)
 
             if d=="LONG":
-                # 보수적으로 SL 우선
                 if lo<=sl:
                     result="LOSS";exit_price=sl;break
                 if hi>=t1:
-                    # TP1 이후 SL=ENTRY
                     sl2=e
                     if lo<=sl2:
                         result="BE";exit_price=e;break
@@ -594,7 +590,6 @@ def main():
     s=get_state()
     show(s)
 
-    # ACTIVE는 백테스트와 무관하게 추적
     if s["status"]=="ACTIVE":
         print("[POSITION] ACTIVE")
         monitor(s)
@@ -617,7 +612,12 @@ def main():
 
     if not bt.get("pass"):
         print("[ENTRY] BACKTEST FAILED")
-        tg(f"""<b>🟠 GOLD FUTURES · 신규 진입 보류</b>
+        current_time_epoch = time.time()
+        last_fail_time = s.get("last_fail_alert_time", 0)
+
+        # 마지막 실패 알림 후 4시간이 지난 경우에만 텔레그램 알림 발송
+        if current_time_epoch - last_fail_time > FAIL_ALERT_COOLDOWN:
+            tg(f"""<b>🟠 GOLD FUTURES · 신규 진입 보류</b>
 ━━━━━━━━━━━━━━━━━━━━
 
 📊 사전 백테스트 결과
@@ -628,9 +628,17 @@ def main():
 ├ 최대 DD　 {bt.get('max_drawdown',0):.2f}R
 └ 결과　　　<b>조건 미충족</b>
 
-📌 기존 포지션은 정상적으로 추적됩니다.
+📌 백테스트 검증은 주기적으로 계속 수행됩니다.
 ━━━━━━━━━━━━━━━━━━━━""")
+            s["last_fail_alert_time"] = current_time_epoch
+            save(STATE, s)
+        else:
+            print("[ENTRY] Fail alert in cooldown period. Skipping telegram message.")
         return
+
+    # 백테스트 통과 시 실패 알림 타이머 리셋
+    s["last_fail_alert_time"] = 0
+    save(STATE, s)
 
     print("[ENTRY] BACKTEST PASSED")
 
@@ -645,8 +653,6 @@ def main():
 
     print(f"[LIVE PRICE] {m(p)} age={a:.1f}m source={src}")
 
-    # fast_info는 timestamp가 없을 수 있으므로
-    # 가격 괴리만 확인하고 지나치게 오래된 1m 가격은 차단
     if a>PRICE_MAX_AGE and src!="FAST":
         print("[ENTRY] LIVE PRICE STALE")
         return
@@ -660,7 +666,6 @@ def main():
         print("[SIGNAL] No qualified setup")
         return
 
-    # 현재가와 분석 진입가 괴리 검사
     dist=abs(p-sig["entry"])/sig["entry"]*100
 
     if dist>0.35:
