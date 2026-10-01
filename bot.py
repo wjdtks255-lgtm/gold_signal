@@ -1,8 +1,8 @@
-# GOLD FUTURES SMART SIGNAL BOT V19.5 (Threshold Calibration)
+# GOLD FUTURES SMART SIGNAL BOT V19.6 (Live Price Robust Fallback)
 import os,json,time,requests,yfinance as yf,pandas as pd,numpy as np
 from datetime import datetime,timezone,timedelta
 
-V="19.5.0"; T="GC=F"; STATE="signal_state.json"; LOG="bot_log.json"
+V="19.6.0"; T="GC=F"; STATE="signal_state.json"; LOG="bot_log.json"
 TOKEN=os.getenv("TELEGRAM_TOKEN",""); CHAT=os.getenv("TELEGRAM_CHAT_ID","")
 KST=timezone(timedelta(hours=9))
 
@@ -14,17 +14,17 @@ RSI_L=(52,68); RSI_S=(32,48); BODY=.38
 RISK_ATR=1.8; MIN_RISK=1.2; MAX_RISK=2.8
 TP=(1.2,2.0,3.0); STRONG_TP=(1.3,2.2,3.5)
 
-# ===== BACKTEST (기준 현실화) =====
+# ===== BACKTEST =====
 BT_PERIOD="30d"
 BT_MIN_TRADES=8
-BT_MIN_WINRATE=25.0  # 25%로 조정 (현재 시장 데이터 반영)
-BT_MIN_PF=0.90       # 0.90으로 조정
+BT_MIN_WINRATE=25.0
+BT_MIN_PF=0.90
 BT_MAX_DD=35.0
 
 # ===== LIVE =====
-PRICE_MAX_AGE=8
+PRICE_MAX_AGE=120  # 허용 연장 (120분)
 COOLDOWN=45
-FAIL_ALERT_COOLDOWN = 4 * 3600  # 4시간 쿨다운
+FAIL_ALERT_COOLDOWN = 4 * 3600
 
 
 def now():
@@ -137,21 +137,18 @@ def addind(x):
     x["ema20"]=x.Close.ewm(span=20,adjust=False).mean()
     x["ema50"]=x.Close.ewm(span=50,adjust=False).mean()
 
-    # RSI
     d=x.Close.diff()
     g=d.clip(lower=0).rolling(14).mean()
     l=(-d.clip(upper=0)).rolling(14).mean()
     rs=g/l.replace(0,np.nan)
     x["rsi"]=100-100/(1+rs)
 
-    # ATR
     tr=pd.concat([
         x.High-x.Low,
         (x.High-x.Close.shift()).abs(),
         (x.Low-x.Close.shift()).abs()],axis=1).max(axis=1)
     x["atr"]=tr.rolling(14).mean()
 
-    # ADX
     up=x.High.diff()
     dn=-x.Low.diff()
     plus=up.where((up>dn)&(up>0),0)
@@ -162,7 +159,6 @@ def addind(x):
     dx=100*(p-n).abs()/(p+n).replace(0,np.nan)
     x["adx"]=dx.rolling(14).mean()
 
-    # Bollinger Bands (20, 2)
     x["bb_mid"] = x.Close.rolling(20).mean()
     bb_std = x.Close.rolling(20).std()
     x["bb_upper"] = x["bb_mid"] + (bb_std * 2)
@@ -287,7 +283,7 @@ def targets(e,risk,strong,d):
 
 
 # =========================================================
-# BACKTEST ENGINE (Adaptive & Fixed Simulation Loop)
+# BACKTEST ENGINE
 # =========================================================
 def backtest(x15,x5):
     print("\n====================================")
@@ -435,9 +431,10 @@ def backtest(x15,x5):
 
 
 # =========================================================
-# LIVE PRICE & ALERTS
+# LIVE PRICE & ROBUST FALLBACK
 # =========================================================
 def live():
+    # 1. fast_info 시도
     try:
         f=yf.Ticker(T).fast_info
         for k in ["last_price","regularMarketPrice"]:
@@ -445,6 +442,7 @@ def live():
                 return float(f[k]),0,"FAST"
     except:pass
 
+    # 2. 1분봉 데이터 시도
     try:
         x=clean(yf.download(
             T,period="1d",interval="1m",
@@ -454,6 +452,18 @@ def live():
             if t.tzinfo is None:t=t.tz_localize("UTC")
             a=(datetime.now(timezone.utc)-t).total_seconds()/60
             return float(x.Close.iloc[-1]),a,"1M"
+    except:pass
+
+    # 3. 5분봉 최신 데이터 Fallback (라이브 대체)
+    try:
+        x5 = clean(yf.download(
+            T, period="1d", interval="5m",
+            progress=False, auto_adjust=False, threads=False))
+        if not x5.empty:
+            t = x5.index[-1]
+            if t.tzinfo is None: t = t.tz_localize("UTC")
+            a = (datetime.now(timezone.utc) - t).total_seconds() / 60
+            return float(x5.Close.iloc[-1]), a, "5M_FALLBACK"
     except:pass
 
     return None,9999,"NONE"
