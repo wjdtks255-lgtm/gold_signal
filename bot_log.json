@@ -1497,5 +1497,23 @@
       "age_15m": 31.51945065,
       "age_1h": 91.51945189999999
     }
+  },
+  {
+    "time": "2026-10-02 02:21:00",
+    "type": "ENTRY",
+    "direction": "SHORT",
+    "entry": 4192.2001953125,
+    "score": 10.4,
+    "regime": "RANGE",
+    "backtest": {
+      "trades": 82,
+      "wins": 21,
+      "losses": 51,
+      "winrate": 25.6,
+      "profit_factor": 0.93,
+      "max_drawdown": 17.33,
+      "net_r": -3.65,
+      "pass": true
+    }
   }
 ]
