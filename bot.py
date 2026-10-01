@@ -1,8 +1,8 @@
-# GOLD FUTURES SMART SIGNAL BOT V19.0 (Adaptive Multi-Strategy Engine)
+# GOLD FUTURES SMART SIGNAL BOT V19.1 (Adaptive Optimized)
 import os,json,time,requests,yfinance as yf,pandas as pd,numpy as np
 from datetime import datetime,timezone,timedelta
 
-V="19.0.0"; T="GC=F"; STATE="signal_state.json"; LOG="bot_log.json"
+V="19.1.0"; T="GC=F"; STATE="signal_state.json"; LOG="bot_log.json"
 TOKEN=os.getenv("TELEGRAM_TOKEN",""); CHAT=os.getenv("TELEGRAM_CHAT_ID","")
 KST=timezone(timedelta(hours=9))
 
@@ -14,12 +14,12 @@ RSI_L=(52,68); RSI_S=(32,48); BODY=.35
 RISK_ATR=1.8; MIN_RISK=1.2; MAX_RISK=2.8
 TP=(1.2,2.0,3.0); STRONG_TP=(1.3,2.2,3.5)
 
-# ===== BACKTEST (유연화된 임계값) =====
-BT_PERIOD="60d"
-BT_MIN_TRADES=15
-BT_MIN_WINRATE=40.0
-BT_MIN_PF=1.00
-BT_MAX_DD=30.0
+# ===== BACKTEST (최적화된 유연한 임계값) =====
+BT_PERIOD="30d"
+BT_MIN_TRADES=10
+BT_MIN_WINRATE=35.0
+BT_MIN_PF=0.95
+BT_MAX_DD=35.0
 
 # ===== LIVE =====
 PRICE_MAX_AGE=8
@@ -175,12 +175,6 @@ def addind(x):
     return x.dropna()
 
 def detect_regime(x, i=-1):
-    """
-    1단계: 시장 국면 진단 계층 (Market Regime Detection)
-    - TREND: ADX 높고 밴드 확장
-    - RANGE: 밴드 폭이 평균보다 좁고 횡보
-    - BREAKOUT: 밴드 스퀴즈 직후 밴드 폭 급확대
-    """
     r = x.iloc[i]
     adx = r.adx
     bb_w = r.bb_width
@@ -198,7 +192,6 @@ def detect_regime(x, i=-1):
 # MULTI-STRATEGY MODULES & DYNAMIC SWITCHING
 # =========================================================
 def strategy_trend(x, d, i=-1):
-    """모듈 A: 추세 추종 전략"""
     r = x.iloc[i]; p = x.iloc[i-1]; s = 0
     if d == "LONG":
         s += (r.Close > r.ema20) * 2
@@ -217,22 +210,18 @@ def strategy_trend(x, d, i=-1):
     return int(s)
 
 def strategy_mean_reversion(x, d, i=-1):
-    """모듈 B: 역추세 / 평균 회귀 전략 (횡보장용)"""
     r = x.iloc[i]; s = 0
     if d == "LONG":
-        # 하단 밴드 터치 또는 과매도 후 반등
         s += (r.Close <= r.bb_lower * 1.005) * 3
         s += (r.rsi < 35) * 2
         s += (r.Close > r.Open and r.pos > 0.6)
     else:
-        # 상단 밴드 터치 또는 과매수 후 반락
         s += (r.Close >= r.bb_upper * 0.995) * 3
         s += (r.rsi > 65) * 2
         s += (r.Close < r.Open and r.pos < 0.4)
     return int(s)
 
 def strategy_breakout(x, d, i=-1):
-    """모듈 C: 변동성 돌파 전략"""
     r = x.iloc[i]; p = x.iloc[i-1]; s = 0
     if d == "LONG":
         s += (r.Close > r.bb_upper) * 3
@@ -245,25 +234,19 @@ def strategy_breakout(x, d, i=-1):
     return int(s)
 
 def evaluate_multi_strategy(x15, x5, d, i=-1):
-    """
-    3단계: 동적 전환 및 가중치 블렌딩 시스템 (Dynamic Switching Logic)
-    시장 국면에 따라 모듈별 가중치를 동적으로 조절하여 종합 점수 산출
-    """
     regime = detect_regime(x15, i)
     
     score_t = strategy_trend(x15, d, i)
     score_m = strategy_mean_reversion(x15, d, i)
     score_b = strategy_breakout(x15, d, i)
 
-    # 국면별 가중치 적용 블렌딩
     if regime == "TREND":
         blended = (score_t * 0.7) + (score_b * 0.2) + (score_m * 0.1)
     elif regime == "BREAKOUT_CANDIDATE":
         blended = (score_b * 0.6) + (score_t * 0.3) + (score_m * 0.1)
-    else:  # RANGE
+    else:
         blended = (score_m * 0.6) + (score_t * 0.3) + (score_b * 0.1)
 
-    # 5분봉 컨펌 점수 결합
     q = x5.loc[:x15.index[i]]
     score_5m = 0
     if len(q) >= 10:
@@ -308,10 +291,10 @@ def targets(e,risk,strong,d):
 # =========================================================
 def backtest(x15,x5):
     print("\n====================================")
-    print(" ADAPTIVE MULTI-STRATEGY BACKTEST")
+    print(" ADAPTIVE MULTI-STRATEGY BACKTEST (30D)")
     print("====================================")
 
-    if len(x15)<300 or len(x5)<300:
+    if len(x15)<100 or len(x5)<100:
         return {"pass":False,"reason":"INSUFFICIENT_DATA"}
 
     trades=[]
@@ -319,7 +302,7 @@ def backtest(x15,x5):
     wins=losses=0
     gross_win=gross_loss=0
 
-    start=100
+    start=50
     last_exit=-99
 
     for i in range(start,len(x15)-20):
@@ -334,8 +317,7 @@ def backtest(x15,x5):
                 best_d = d
                 best_regime = regime
 
-        # 동적 진입 임계값 (국면별 유연성 부여)
-        threshold = 6.0 if best_regime == "TREND" else 5.0
+        threshold = 5.5 if best_regime == "TREND" else 4.5
         if not best_d or best_score < threshold:
             continue
 
@@ -345,10 +327,10 @@ def backtest(x15,x5):
 
         t=x15.index[i]
         q=x5.loc[:t]
-        if len(q)<30:continue
+        if len(q)<20:continue
 
         e,sl,risk=levels(x15,best_d,i)
-        strong=best_score >= 8.5
+        strong=best_score >= 8.0
         t1,t2,t3=targets(e,risk,strong,best_d)
 
         result=None; exit_price=None
@@ -377,10 +359,8 @@ def backtest(x15,x5):
                     sl2=e
                     if hi>=sl2:
                         result="BE";exit_price=e;break
-                    if lo<=t2:
-                        sl3=t1
-                        if hi>=sl3:
-                            result="TP1";exit_price=t1;break
+                    if lo<=sl3:
+                        result="TP1";exit_price=t1;break
                         if lo<=t3:
                             result="WIN";exit_price=t3;break
 
@@ -433,7 +413,7 @@ def backtest(x15,x5):
 
 
 # =========================================================
-# LIVE PRICE & ALERTS (기존 유지)
+# LIVE PRICE & ALERTS
 # =========================================================
 def live():
     try:
@@ -474,7 +454,7 @@ def entry_alert(s,bt):
 <b>🛡 보호 손절</b>
 └ SL　 <b>{m(s['sl'])}</b>
 
-<b>📊 사전 백테스트</b>
+<b>📊 사전 백테스트 (30D)</b>
 ├ 거래 횟수　{bt['trades']}회
 ├ 승률　　　{bt['winrate']:.1f}%
 ├ Profit Factor　{bt['profit_factor']:.2f}
@@ -596,12 +576,12 @@ def main():
         if current_time_epoch - last_fail_time > FAIL_ALERT_COOLDOWN:
             tg(f"""<b>🟠 GOLD FUTURES · 신규 진입 보류</b>
 ━━━━━━━━━━━━━━━━━━━━
-📊 어댑티브 백테스트 결과
+📊 어댑티브 백테스트 결과 (30D)
 ├ 거래 횟수　{bt.get('trades',0)}회
 ├ 승률　　　{bt.get('winrate',0):.1f}%
 ├ Profit Factor　{bt.get('profit_factor',0):.2f}
 ├ 최대 DD　 {bt.get('max_drawdown',0):.2f}R
-└ 결과　　　<b>조건 미충족 (유연 변환 대기)</b>
+└ 결과　　　<b>조건 미충족</b>
 ━━━━━━━━━━━━━━━━━━━━""")
             s["last_fail_alert_time"] = current_time_epoch
             save(STATE, s)
@@ -616,7 +596,6 @@ def main():
         print("[ENTRY] LIVE PRICE UNAVAILABLE OR STALE")
         return
 
-    # 실시간 다중 전략 평가
     best_d = None; best_score = 0; best_regime = "UNKNOWN"
     for d in ["LONG","SHORT"]:
         score, regime = evaluate_multi_strategy(x15, x5, d, -1)
@@ -625,13 +604,13 @@ def main():
             best_d = d
             best_regime = regime
 
-    threshold = 6.0 if best_regime == "TREND" else 5.0
+    threshold = 5.5 if best_regime == "TREND" else 4.5
     if not best_d or best_score < threshold:
         print(f"[SIGNAL] No qualified setup (Score: {best_score}, Regime: {best_regime})")
         return
 
     e,sl,risk=levels(x15,best_d,-1)
-    strong=best_score >= 8.5
+    strong=best_score >= 8.0
     t1,t2,t3=targets(e,risk,strong,best_d)
 
     sig={
