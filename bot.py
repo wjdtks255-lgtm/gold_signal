@@ -1,8 +1,8 @@
-# GOLD FUTURES SMART SIGNAL BOT V19.7 (NaN Safe Price & Level Fix)
+# GOLD FUTURES SMART SIGNAL BOT V19.7.1 (Enhanced UI & NaN Safe)
 import os,json,time,requests,yfinance as yf,pandas as pd,numpy as np
 from datetime import datetime,timezone,timedelta
 
-V="19.7.0"; T="GC=F"; STATE="signal_state.json"; LOG="bot_log.json"
+V="19.7.1"; T="GC=F"; STATE="signal_state.json"; LOG="bot_log.json"
 TOKEN=os.getenv("TELEGRAM_TOKEN",""); CHAT=os.getenv("TELEGRAM_CHAT_ID","")
 KST=timezone(timedelta(hours=9))
 
@@ -153,7 +153,7 @@ def addind(x):
         x.High-x.Low,
         (x.High-x.Close.shift()).abs(),
         (x.Low-x.Close.shift()).abs()],axis=1).max(axis=1)
-    x["atr"]=tr.rolling(14).mean().fillna(x.Close * 0.01) # NaN 방어
+    x["atr"]=tr.rolling(14).mean().fillna(x.Close * 0.01)
 
     up=x.High.diff()
     dn=-x.Low.diff()
@@ -283,7 +283,6 @@ def levels(x,d,i):
         risk=min(risk,a*MAX_RISK)
         sl=e+risk
 
-    # 최종 안전 장치 (NaN 방어)
     if np.isnan(e) or np.isnan(sl) or np.isnan(risk) or risk <= 0:
         risk = e * 0.01
         sl = e - risk if d == "LONG" else e + risk
@@ -449,7 +448,7 @@ def backtest(x15,x5):
 
 
 # =========================================================
-# LIVE PRICE & ROBUST FALLBACK
+# LIVE PRICE & ENHANCED ALERTS
 # =========================================================
 def live():
     try:
@@ -485,66 +484,61 @@ def live():
 
 def entry_alert(s,bt):
     d=s["direction"]
-    icon="🟢" if d=="LONG" else "🔴"
-    return f"""<b>🟡 GOLD FUTURES · 어댑티브 신규 신호</b>
+    icon = "🟢 <b>LONG · 매수</b>" if d == "LONG" else "🔴 <b>SHORT · 매도</b>"
+    return f"""<b>✨ GOLD FUTURES · 어댑티브 신규 신호</b>
 ━━━━━━━━━━━━━━━━━━━━
-
-{icon} <b>{d} · {'매수' if d=='LONG' else '매도'}</b>
+{icon}
+━━━━━━━━━━━━━━━━━━━━
 🧠 감지 국면　<b>{s.get('regime','UNKNOWN')}</b>
-💰 진입가　<b>{m(s['entry'])}</b>
+💰 추천 진입　<code>{m(s['entry'])}</code>
 
-<b>🎯 목표가</b>
-├ TP1　{m(s['tp1'])}
-├ TP2　{m(s['tp2'])}
-└ TP3　{m(s['tp3'])}
+<b>🎯 수익 목표 구간</b>
+├ <b>TP1</b>　<code>{m(s['tp1'])}</code>
+├ <b>TP2</b>　<code>{m(s['tp2'])}</code>
+└ <b>TP3</b>　<code>{m(s['tp3'])}</code>
 
-<b>🛡 보호 손절</b>
-└ SL　 <b>{m(s['sl'])}</b>
+<b>🛡 리스크 관리 (SL)</b>
+└ <b>손절선</b>　<code>{m(s['sl'])}</code>
 
-<b>📊 사전 백테스트 (30D)</b>
+<b>📊 30일 사전 백테스트 성과</b>
 ├ 거래 횟수　{bt['trades']}회
 ├ 승률　　　{bt['winrate']:.1f}%
-├ Profit Factor　{bt['profit_factor']:.2f}
-└ 누적 결과　{bt['net_r']:+.2f}R
+├ Profit Factor　<b>{bt['profit_factor']:.2f}</b>
+└ 누적 결과　<b>{bt['net_r']:+.2f}R</b>
 
 🔥 종합 점수　<b>{s['score']}점 ({s['strength']})</b>
-
 ━━━━━━━━━━━━━━━━━━━━
-⏱ {now().strftime('%H:%M KST')}
-📌 멀티 전략 엔진 구동 중
-━━━━━━━━━━━━━━━━━━━━"""
+⏱ <code>{now().strftime('%H:%M:%S KST')}</code>
+📌 <b>멀티 전략 엔진 구동 중</b>"""
 
 def tp_alert(s,n,p):
     e=s["entry"]
     gain=(p/e-1)*100 if s["direction"]=="LONG" else (e/p-1)*100
-    sl=s["entry"] if n==1 else s["tp1"]
-    return f"""<b>🟢 GOLD FUTURES · TP{n} 달성</b>
+    return f"""<b>🎯 GOLD FUTURES · TP{n} 도달 성공!</b>
 ━━━━━━━━━━━━━━━━━━━━
-
-📈 {s['direction']} 포지션
-💰 진입가　{m(e)}
-🎯 TP{n}　　<b>{m(p)}</b>
-📈 누적 수익　<b>{gain:+.2f}%</b>
-🛡 보호 SL　{m(sl)}
+📈 포지션　<b>{s['direction']}</b>
+💰 진입가　<code>{m(e)}</code>
+🎯 <b>TP{n} 목표가</b>　<code>{m(p)}</code>
+📈 실시간 수익률　<b>{gain:+.2f}%</b>
 ━━━━━━━━━━━━━━━━━━━━"""
 
 def sl_alert(s,p,age,src):
     e=s["entry"]
     loss=(p/e-1)*100 if s["direction"]=="LONG" else (e/p-1)*100
-    return f"""<b>🔴 GOLD FUTURES · 리스크 종료</b>
+    return f"""<b>🛡 GOLD FUTURES · 보호 손절(SL) 작동</b>
 ━━━━━━━━━━━━━━━━━━━━
-📉 {s['direction']} 포지션
-💰 진입가　{m(e)}
-🛑 청산가　<b>{m(p)}</b>
-📉 손익률　<b>{loss:+.2f}%</b>
+📉 포지션　<b>{s['direction']}</b>
+💰 진입가　<code>{m(e)}</code>
+🛑 청산가　<code>{m(p)}</code>
+📉 최종 손익　<b>{loss:+.2f}%</b>
 ━━━━━━━━━━━━━━━━━━━━"""
 
 def stale_alert(s,p,a):
-    return f"""<b>⚠️ GOLD FUTURES · 가격 확인 지연</b>
+    return f"""<b>⚠️ GOLD FUTURES · 시세 지연 경고</b>
 ━━━━━━━━━━━━━━━━━━━━
-📌 포지션　{s['direction']}
-💰 최근 가격　{m(p) if p else '조회 실패'}
-🛡 보호 SL　{m(s['sl'])}
+📌 포지션　<b>{s['direction']}</b>
+💰 최근 가격　{m(p) if p else '조회 실패'} (지연: {a:.1f}분)
+🛡 보호 SL　<code>{m(s['sl'])}</code>
 ━━━━━━━━━━━━━━━━━━━━"""
 
 def close(s,p,reason):
