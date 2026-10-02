@@ -501,7 +501,7 @@ def entry_alert(s,bt):
         r3 = (e / t3 - 1) * 100
         rs_loss = (e / sl - 1) * 100
 
-    tv_url = "https://www.tradingview.com/chart/?symbol=COMEX%3AGC1%21"
+    tv_url = "https://www.tradingview.com/symbols/COMEX-GC1%21/"
 
     return f"""⚡ <b>[골드 선물] 어댑티브 퀀트 시그널</b>
 ━━━━━━━━━━━━━━━━━━━━━━━
@@ -526,7 +526,7 @@ def entry_alert(s,bt):
  ├ 프로핏 팩터 : <b>{bt['profit_factor']:.2f}</b>
  └ 누적 수익률 : <b>{bt['net_r']:+.2f}R</b>
 ━━━━━━━━━━━━━━━━━━━━━━━
-🔗 <a href="{tv_url}"><b>트레이딩뷰 실시간 차트 (COMEX:GC1!)</b></a>
+🔗 <a href="{tv_url}"><b>트레이딩뷰 골드 퓨처스 (COMEX:GC1!)</b></a>
 ⏱ <code>{now().strftime('%H:%M:%S KST')}</code> | 퀀트 엔진 활성화됨"""
 
 def tp_alert(s,n,p):
