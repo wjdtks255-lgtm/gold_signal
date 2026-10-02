@@ -1575,5 +1575,23 @@
     "type": "EXIT",
     "price": 4173.89990234375,
     "reason": "SL"
+  },
+  {
+    "time": "2026-10-02 10:32:35",
+    "type": "ENTRY",
+    "direction": "SHORT",
+    "entry": 4170.39990234375,
+    "score": 13.4,
+    "regime": "TREND",
+    "backtest": {
+      "trades": 85,
+      "wins": 26,
+      "losses": 50,
+      "winrate": 30.6,
+      "profit_factor": 1.28,
+      "max_drawdown": 15.75,
+      "net_r": 13.66,
+      "pass": true
+    }
   }
 ]
