@@ -1,4 +1,4 @@
-# GOLD FUTURES SMART SIGNAL BOT V19.7.3 (Professional Quant UI + TV Link & NaN Safe)
+# GOLD FUTURES SMART SIGNAL BOT V19.7.3 (Professional Quant UI + Korean Edition)
 import os,json,time,requests,yfinance as yf,pandas as pd,numpy as np
 from datetime import datetime,timezone,timedelta
 
@@ -448,7 +448,7 @@ def backtest(x15,x5):
 
 
 # =========================================================
-# LIVE PRICE & PROFESSIONAL QUANT ALERTS
+# LIVE PRICE & PROFESSIONAL QUANT ALERTS (KOREAN UI)
 # =========================================================
 def live():
     try:
@@ -484,7 +484,7 @@ def live():
 
 def entry_alert(s,bt):
     d=s["direction"]
-    icon = "🟢 LONG POSITION (BUY)" if d == "LONG" else "🔴 SHORT POSITION (SELL)"
+    icon = "🟢 롱 포지션 (매수)" if d == "LONG" else "🔴 숏 포지션 (매도)"
     regime = s.get('regime', 'UNKNOWN')
     
     e = s['entry']
@@ -501,38 +501,38 @@ def entry_alert(s,bt):
         r3 = (e / t3 - 1) * 100
         rs_loss = (e / sl - 1) * 100
 
-    tv_url = "https://www.tradingview.com/chart/?symbol=GC%2FUSD"
+    tv_url = "https://www.tradingview.com/chart/?symbol=COMEX%3AGC1%21"
 
-    return f"""⚡ <b>[GOLD FUTURES] ADAPTIVE QUANT SIGNAL</b>
+    return f"""⚡ <b>[골드 선물] 어댑티브 퀀트 시그널</b>
 ━━━━━━━━━━━━━━━━━━━━━━━
-🎯 <b>DIRECTION</b> : <b>{icon}</b>
-💎 <b>SETUP GRADE</b> : <b>{s['strength']}</b> (Score: <b>{s['score']}</b>/10)
+🎯 <b>진입 방향</b> : <b>{icon}</b>
+💎 <b>셋업 등급</b> : <b>{s['strength']}</b> (점수: <b>{s['score']}</b>/10)
 ━━━━━━━━━━━━━━━━━━━━━━━
-📊 <b>MARKET CONTEXT & ENGINE</b>
- • Market Regime : <code>{regime}</code>
- • Entry Price   : <code>{m(e)}</code>
- • Signal Engine : Multi-Strategy Confluence
+📊 <b>시장 국면 & 엔진</b>
+ • 시장 국면　 : <code>{regime}</code>
+ • 진입 가격　 : <code>{m(e)}</code>
+ • 시그널 엔진 : 멀티 전략 컨플루언스
 
-🎯 <b>TARGET PRICE LADDER</b>
+🎯 <b>목표가 래더 (TP)</b>
  ├ <b>TP1</b> (50%) : <code>{m(t1)}</code> ({r1:+.2f}%)
  ├ <b>TP2</b> (30%) : <code>{m(t2)}</code> ({r2:+.2f}%)
  └ <b>TP3</b> (20%) : <code>{m(t3)}</code> ({r3:+.2f}%)
 
-🛡 <b>RISK MANAGEMENT</b>
- └ <b>Stop Loss</b> : <code>{m(sl)}</code> ({rs_loss:+.2f}%)
+🛡 <b>리스크 관리</b>
+ └ <b>손절가 (SL)</b> : <code>{m(sl)}</code> ({rs_loss:+.2f}%)
 
-📈 <b>30-DAY QUANT BACKTEST</b>
- ├ Trades / WinRate : {bt['trades']}회 / {bt['winrate']:.1f}%
- ├ Profit Factor    : <b>{bt['profit_factor']:.2f}</b>
- └ Cumulative Return: <b>{bt['net_r']:+.2f}R</b>
+📈 <b>30일 퀀트 백테스트</b>
+ ├ 거래 / 승률 : {bt['trades']}회 / {bt['winrate']:.1f}%
+ ├ 프로핏 팩터 : <b>{bt['profit_factor']:.2f}</b>
+ └ 누적 수익률 : <b>{bt['net_r']:+.2f}R</b>
 ━━━━━━━━━━━━━━━━━━━━━━━
-🔗 <a href="{tv_url}"><b>TradingView Live Chart (GC=F)</b></a>
-⏱ <code>{now().strftime('%H:%M:%S KST')}</code> | Quant Engine Active"""
+🔗 <a href="{tv_url}"><b>트레이딩뷰 실시간 차트 (COMEX:GC1!)</b></a>
+⏱ <code>{now().strftime('%H:%M:%S KST')}</code> | 퀀트 엔진 활성화됨"""
 
 def tp_alert(s,n,p):
     e=s["entry"]
     gain=(p/e-1)*100 if s["direction"]=="LONG" else (e/p-1)*100
-    return f"""<b>🎯 GOLD FUTURES · TP{n} 도달 성공!</b>
+    return f"""<b>🎯 골드 선물 · TP{n} 도달 성공!</b>
 ━━━━━━━━━━━━━━━━━━━━
 📈 포지션　<b>{s['direction']}</b>
 💰 진입가　<code>{m(e)}</code>
@@ -543,7 +543,7 @@ def tp_alert(s,n,p):
 def sl_alert(s,p,age,src):
     e=s["entry"]
     loss=(p/e-1)*100 if s["direction"]=="LONG" else (e/p-1)*100
-    return f"""<b>🛡 GOLD FUTURES · 보호 손절(SL) 작동</b>
+    return f"""<b>🛡 골드 선물 · 보호 손절(SL) 작동</b>
 ━━━━━━━━━━━━━━━━━━━━
 📉 포지션　<b>{s['direction']}</b>
 💰 진입가　<code>{m(e)}</code>
@@ -552,7 +552,7 @@ def sl_alert(s,p,age,src):
 ━━━━━━━━━━━━━━━━━━━━"""
 
 def stale_alert(s,p,a):
-    return f"""<b>⚠️ GOLD FUTURES · 시세 지연 경고</b>
+    return f"""<b>⚠️ 골드 선물 · 시세 지연 경고</b>
 ━━━━━━━━━━━━━━━━━━━━
 📌 포지션　<b>{s['direction']}</b>
 💰 최근 가격　{m(p) if p else '조회 실패'} (지연: {a:.1f}분)
@@ -632,7 +632,7 @@ def main():
         last_fail_time = s.get("last_fail_alert_time", 0)
 
         if current_time_epoch - last_fail_time > FAIL_ALERT_COOLDOWN:
-            tg(f"""<b>🟠 GOLD FUTURES · 신규 진입 보류</b>
+            tg(f"""<b>🟠 골드 선물 · 신규 진입 보류</b>
 ━━━━━━━━━━━━━━━━━━━━
 📊 어댑티브 백테스트 결과 (30D)
 ├ 거래 횟수　{bt.get('trades',0)}회
@@ -696,7 +696,7 @@ if __name__=="__main__":
         print("[FATAL]",repr(e))
         log("FATAL",error=repr(e))
         try:
-            tg(f"""<b>⚠️ GOLD FUTURES · 시스템 오류</b>
+            tg(f"""<b>⚠️ 골드 선물 · 시스템 오류</b>
 ━━━━━━━━━━━━━━━━━━━━
 ⏱ {ts()}
 🔧 <code>{str(e)[:400]}</code>
