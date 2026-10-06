@@ -1,8 +1,8 @@
-# GOLD FUTURES SMART SIGNAL BOT V19.7.5 (Fresh Start & Clean Reset)
+# GOLD FUTURES SMART SIGNAL BOT V19.7.6 (Normal Operation & Monitoring)
 import os,json,time,requests,yfinance as yf,pandas as pd,numpy as np
 from datetime import datetime,timezone,timedelta
 
-V="19.7.5"; T="GC=F"; STATE="signal_state.json"; LOG="bot_log.json"
+V="19.7.6"; T="GC=F"; STATE="signal_state.json"; LOG="bot_log.json"
 TOKEN=os.getenv("TELEGRAM_TOKEN",""); CHAT=os.getenv("TELEGRAM_CHAT_ID","")
 KST=timezone(timedelta(hours=9))
 
@@ -412,7 +412,7 @@ def entry_alert(s,bt):
     r3 = (t3/e-1)*100 if d=="LONG" else (e/t3-1)*100
     rs_loss = (sl/e-1)*100 if d=="LONG" else (e/sl-1)*100
 
-    return f"""⚡ <b>[골드 선물] 새로 시작된 어댑티브 퀀트 시그널</b>
+    return f"""⚡ <b>[골드 선물] 신규 어댑티브 퀀트 시그널</b>
 ━━━━━━━━━━━━━━━━━━━━━━━
 🎯 <b>진입 방향</b> : <b>{icon}</b>
 💎 <b>셋업 등급</b> : <b>{s['strength']}</b> (점수: <b>{s['score']}</b>/10)
@@ -426,7 +426,7 @@ def entry_alert(s,bt):
  └ <b>TP3</b> : <code>{m(t3)}</code> ({r3:+.2f}%)
 
 🛡 <b>손절가 (SL)</b> : <code>{m(sl)}</code> ({rs_loss:+.2f}%)
-⏱ <code>{now().strftime('%H:%M:%S KST')}</code> | <b>V19.7.5 FRESH START</b>"""
+⏱ <code>{now().strftime('%H:%M:%S KST')}</code> | <b>V19.7.6</b>"""
 
 def monitor(s):
     p,a,src=live()
@@ -436,16 +436,42 @@ def monitor(s):
 
     d=s["direction"]; sl=s["sl"]; st=s["stage"]
     if d=="LONG":
-        if p<=sl: close(s,p,"SL");return
+        if p<=sl:
+            close(s,p,"SL")
+            tg(f"🛡 <b>골드 선물 · 손절(SL) 도달</b>\n━━━━━━━━━━━━━━━━━━━━━━━\n📊 포지션: <b>LONG</b>\n💰 청산가: <code>{m(p)}</code>")
+            return
         if st=="INITIAL" and p>=s["tp1"]:
-            s["stage"]="TP1_TRAIL";s["sl"]=s["entry"];save(s,s);return
+            s["stage"]="TP1_TRAIL"; s["sl"]=s["entry"]; save(s,s)
+            tg(f"🎯 <b>골드 선물 · TP1 도달 성공!</b>\n━━━━━━━━━━━━━━━━━━━━━━━\n📊 포지션: <b>LONG</b>\n💰 진입가: <code>{m(s['entry'])}</code>\n🎯 TP1 목표가: <code>{m(s['tp1'])}</code>\n🛡 <b>본전(Entry)으로 손절가(SL) 상향 조정됨</b>")
+            return
+        if st=="TP1_TRAIL" and p>=s["tp2"]:
+            s["stage"]="TP2_TRAIL"; s["sl"]=s["tp1"]; save(s,s)
+            tg(f"🎯 <b>골드 선물 · TP2 도달 성공!</b>\n━━━━━━━━━━━━━━━━━━━━━━━\n📊 포지션: <b>LONG</b>\n🎯 TP2 목표가: <code>{m(s['tp2'])}</code>\n🛡 <b>손절가(SL)가 TP1으로 상향 조정됨</b>")
+            return
+        if st=="TP2_TRAIL" and p>=s["tp3"]:
+            close(s,p,"TP3_WIN")
+            tg(f"🏆 <b>골드 선물 · TP3 최종 목표가 도달 성공! (WIN)</b>\n━━━━━━━━━━━━━━━━━━━━━━━\n📊 포지션: <b>LONG</b>\n💰 최종 청산가: <code>{m(p)}</code>")
+            return
     else:
-        if p>=sl: close(s,p,"SL");return
+        if p>=sl:
+            close(s,p,"SL")
+            tg(f"🛡 <b>골드 선물 · 손절(SL) 도달</b>\n━━━━━━━━━━━━━━━━━━━━━━━\n📊 포지션: <b>SHORT</b>\n💰 청산가: <code>{m(p)}</code>")
+            return
         if st=="INITIAL" and p<=s["tp1"]:
-            s["stage"]="TP1_TRAIL";s["sl"]=s["entry"];save(s,s);return
+            s["stage"]="TP1_TRAIL"; s["sl"]=s["entry"]; save(s,s)
+            tg(f"🎯 <b>골드 선물 · TP1 도달 성공!</b>\n━━━━━━━━━━━━━━━━━━━━━━━\n📊 포지션: <b>SHORT</b>\n💰 진입가: <code>{m(s['entry'])}</code>\n🎯 TP1 목표가: <code>{m(s['tp1'])}</code>\n🛡 <b>본전(Entry)으로 손절가(SL) 상향 조정됨</b>")
+            return
+        if st=="TP1_TRAIL" and p<=s["tp2"]:
+            s["stage"]="TP2_TRAIL"; s["sl"]=s["tp1"]; save(s,s)
+            tg(f"🎯 <b>골드 선물 · TP2 도달 성공!</b>\n━━━━━━━━━━━━━━━━━━━━━━━\n📊 포지션: <b>SHORT</b>\n🎯 TP2 목표가: <code>{m(s['tp2'])}</code>\n🛡 <b>손절가(SL)가 TP1으로 상향 조정됨</b>")
+            return
+        if st=="TP2_TRAIL" and p<=s["tp3"]:
+            close(s,p,"TP3_WIN")
+            tg(f"🏆 <b>골드 선물 · TP3 최종 목표가 도달 성공! (WIN)</b>\n━━━━━━━━━━━━━━━━━━━━━━━\n📊 포지션: <b>SHORT</b>\n💰 최종 청산가: <code>{m(p)}</code>")
+            return
 
 def close(s,p,reason):
-    s.update({"status":"IDLE","direction":None,"entry":None,"sl":None,"stage":"INITIAL"})
+    s.update({"status":"IDLE","direction":None,"entry":None,"sl":None,"stage":"INITIAL","exit_price":p,"exit_reason":reason})
     save(STATE,s)
     log("EXIT",price=p,reason=reason)
 
@@ -455,18 +481,20 @@ def close(s,p,reason):
 # =========================================================
 def main():
     print("====================================")
-    print(f" GOLD FUTURES SMART SIGNAL BOT V{V} (FRESH)")
+    print(f" GOLD FUTURES SMART SIGNAL BOT V{V}")
     print("====================================")
 
-    # 1. 완전 초기화 실행 (새로 시작)
-    s = default()
-    save(STATE, s)
-    print("[RESET] State has been completely reset for a fresh start.")
+    s = get_state()
+    show(s)
 
-    # 2. 텔레그램 정상 작동 테스트 메시지 전송
-    tg(f"🔄 <b>골드 선물 봇 · 새로 시작 (V19.7.5)</b>\n⏱ {ts()}\n모든 상태가 초기화되었습니다. 신규 시그널 탐색을 시작합니다.")
+    # 1. 이미 활성화된 포지션이 있는 경우 모니터링 수행
+    if s.get("status") == "ACTIVE" and s.get("direction"):
+        print("[MONITOR] Active position found. Checking live price & targets...")
+        monitor(s)
+        return
 
-    # 3. 데이터 로드 및 백테스트
+    # 2. 포지션이 없는 경우 신규 시그널 탐색
+    print("[SCAN] Searching for new trading setups...")
     x15=addind(getdata("15m",BT_PERIOD))
     x5=addind(getdata("5m",BT_PERIOD))
     bt=backtest(x15,x5)
