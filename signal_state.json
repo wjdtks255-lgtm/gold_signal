@@ -1,5 +1,5 @@
 {
-  "version": "19.7.3",
+  "version": "19.7.4",
   "status": "ACTIVE",
   "direction": "SHORT",
   "entry": 4203.39990234375,
@@ -25,5 +25,6 @@
     "pass": true
   },
   "last_fail_alert_time": 0,
+  "last_stale_alert_time": 0,
   "regime": "TREND"
 }
