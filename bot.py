@@ -1,8 +1,8 @@
-# GOLD FUTURES SMART SIGNAL BOT V19.7.3 (Professional Quant UI + Korean Edition)
+# GOLD FUTURES SMART SIGNAL BOT V19.7.4 (Professional Quant UI + Market Hours Guard)
 import os,json,time,requests,yfinance as yf,pandas as pd,numpy as np
 from datetime import datetime,timezone,timedelta
 
-V="19.7.3"; T="GC=F"; STATE="signal_state.json"; LOG="bot_log.json"
+V="19.7.4"; T="GC=F"; STATE="signal_state.json"; LOG="bot_log.json"
 TOKEN=os.getenv("TELEGRAM_TOKEN",""); CHAT=os.getenv("TELEGRAM_CHAT_ID","")
 KST=timezone(timedelta(hours=9))
 
@@ -22,9 +22,10 @@ BT_MIN_PF=0.90
 BT_MAX_DD=35.0
 
 # ===== LIVE =====
-PRICE_MAX_AGE=120
+PRICE_MAX_AGE=180
 COOLDOWN=45
 FAIL_ALERT_COOLDOWN = 4 * 3600
+STALE_ALERT_COOLDOWN = 6 * 3600  # 지연 경고 알림 폭탄 방지 쿨다운
 
 
 def now():
@@ -83,7 +84,7 @@ def default():
         "stage":"INITIAL","signal_time":None,
         "exit_price":None,"exit_reason":None,
         "score":0,"strength":"NORMAL","setup_hash":None,
-        "backtest":{}, "last_fail_alert_time": 0, "regime": "UNKNOWN"
+        "backtest":{}, "last_fail_alert_time": 0, "last_stale_alert_time": 0, "regime": "UNKNOWN"
     }
 
 def get_state():
@@ -437,13 +438,6 @@ def backtest(x15,x5):
         pf>=BT_MIN_PF and
         dd<=BT_MAX_DD)
 
-    print(f"Trades       : {n}")
-    print(f"Win Rate     : {wr:.1f}%")
-    print(f"Profit Factor: {pf:.2f}")
-    print(f"Max DD       : {dd:.2f}R")
-    print(f"Net Result   : {sum(trades):+.2f}R")
-    print("RESULT       :", "PASS" if result["pass"] else "FAIL")
-
     return result
 
 
@@ -570,9 +564,25 @@ def close(s,p,reason):
 
 def monitor(s):
     p,a,src=live()
-    if p is None or a>PRICE_MAX_AGE:
-        tg(stale_alert(s,p,a))
+    
+    # 데이터가 없거나 지연된 경우
+    if p is None or a > PRICE_MAX_AGE:
+        current_time_epoch = time.time()
+        last_stale_time = s.get("last_stale_alert_time", 0)
+        
+        # 쿨다운(6시간)이 지난 경우에만 시세 지연 경고 전송 (알림 폭탄 방지)
+        if current_time_epoch - last_stale_time > STALE_ALERT_COOLDOWN:
+            tg(stale_alert(s, p, a))
+            s["last_stale_alert_time"] = current_time_epoch
+            save(STATE, s)
+        else:
+            print(f"[MONITOR] Price stale ({a:.1f}m), but suppressed alert due to cooldown.")
         return
+
+    # 가격이 정상 수신되면 지연 경고 타이머 초기화
+    if s.get("last_stale_alert_time", 0) != 0:
+        s["last_stale_alert_time"] = 0
+        save(STATE, s)
 
     d=s["direction"]; sl=s["sl"]; st=s["stage"]
     if d=="LONG":
