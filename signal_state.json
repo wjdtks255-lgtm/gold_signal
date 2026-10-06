@@ -21,7 +21,7 @@
     "winrate": 22.2,
     "profit_factor": 0.95,
     "max_drawdown": 17.77,
-    "net_r": -2.0,
+    "net_r": -2.01,
     "pass": false
   },
   "last_fail_alert_time": 0,
