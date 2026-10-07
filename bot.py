@@ -1,8 +1,8 @@
-# GOLD FUTURES SMART SIGNAL BOT V20.1.0 (Detailed Alert & Chart Link)
+# GOLD FUTURES SMART SIGNAL BOT V20.1.2 (Sequential Stage Alert)
 import os, json, time, requests, yfinance as yf, pandas as pd, numpy as np
 from datetime import datetime, timezone, timedelta
 
-V = "20.1.0"; T = "GC=F"; STATE = "signal_state.json"; LOG = "bot_log.json"
+V = "20.1.2"; T = "GC=F"; STATE = "signal_state.json"; LOG = "bot_log.json"
 TOKEN = os.getenv("TELEGRAM_TOKEN", ""); CHAT = os.getenv("TELEGRAM_CHAT_ID", "")
 KST = timezone(timedelta(hours=9))
 
@@ -20,7 +20,6 @@ BT_MIN_TRADES = 5
 BT_MIN_WINRATE = 18.0
 BT_MIN_PF = 0.75
 
-# JSON Encoder for Numpy/Pandas Types
 class NpEncoder(json.JSONEncoder):
     def default(self, obj):
         if isinstance(obj, np.integer): return int(obj)
@@ -181,14 +180,9 @@ def evaluate_multi_strategy(x15, x5, d, i=-1):
         else: score_5m += int(r5.Close < r5.ema20) + int(r5.rsi <= 52)
 
     ind_info = {
-        "rsi": float(r.rsi),
-        "adx": float(r.adx),
-        "atr": float(r.atr),
-        "ema20": float(r.ema20),
-        "ema50": float(r.ema50),
-        "score_5m": int(score_5m)
+        "rsi": float(r.rsi), "adx": float(r.adx), "atr": float(r.atr),
+        "ema20": float(r.ema20), "ema50": float(r.ema50), "score_5m": int(score_5m)
     }
-
     return float(s + score_5m), regime, ind_info
 
 def levels(x, d, i):
@@ -219,7 +213,6 @@ def targets(e, risk, strong, d):
 def backtest(x15, x5):
     if len(x15) < 50 or len(x5) < 50:
         return {"pass": False, "reason": "INSUFFICIENT_DATA"}
-
     trades = []
     wins = losses = gross_win = gross_loss = 0
     last_exit = -99
@@ -227,14 +220,12 @@ def backtest(x15, x5):
     for i in range(30, len(x15) - 10):
         if i - last_exit < 2: continue
         best_d = None; best_score = 0; best_regime = "UNKNOWN"
-
         for d in ["LONG", "SHORT"]:
             score, regime, _ = evaluate_multi_strategy(x15, x5, d, i)
             if score > best_score:
                 best_score = score; best_d = d; best_regime = regime
 
         if not best_d or best_score < 3.0: continue
-
         e, sl, risk = levels(x15, best_d, i)
         t1, t2, t3 = targets(e, risk, best_score >= 6.0, best_d)
 
@@ -242,7 +233,6 @@ def backtest(x15, x5):
         for k in range(i + 1, min(i + 40, len(x15))):
             c = x15.iloc[k]
             hi = float(c.High); lo = float(c.Low)
-
             if best_d == "LONG":
                 if lo <= sl: result = "LOSS"; exit_price = sl; break
                 if hi >= t2: result = "WIN"; exit_price = t2; break
@@ -263,7 +253,6 @@ def backtest(x15, x5):
 
     n = int(len(trades))
     if not n: return {"pass": False, "reason": "NO_TRADES", "trades": 0}
-
     wr = float(wins / n * 100)
     pf = float(gross_win / gross_loss) if gross_loss else 99.0
     return {
@@ -278,7 +267,6 @@ def live():
         for k in ["last_price", "regularMarketPrice"]:
             if f.get(k): return float(f[k]), 0, "FAST"
     except: pass
-
     try:
         x = clean(yf.download(T, period="1d", interval="1m", progress=False, auto_adjust=False, threads=False))
         if not x.empty:
@@ -298,12 +286,6 @@ def entry_alert(s):
     rs_loss = (sl/e-1)*100 if d=="LONG" else (e/sl-1)*100
 
     ind = s.get("indicators", {})
-    rsi = ind.get("rsi", 0.0)
-    adx = ind.get("adx", 0.0)
-    atr = ind.get("atr", 0.0)
-    score_5m = ind.get("score_5m", 0)
-
-    # TradingView GC1! Chart Link
     tv_chart_link = "https://www.tradingview.com/chart/?symbol=COMEX%3AGC1!"
 
     return f"""⚡ <b>[골드 선물] 스마트 퀀트 시그널 V20</b>
@@ -315,10 +297,10 @@ def entry_alert(s):
 💰 <b>진입 가격</b> : <code>{m(e)}</code>
 
 ⚙️ <b>[ 기술적 분석 지표 (15M / 5M) ]</b>
- • <b>RSI (14)</b> : <code>{rsi:.1f}</code>
- • <b>ADX (14)</b> : <code>{adx:.1f}</code> (추세강도)
- • <b>ATR (14)</b> : <code>{m(atr)}</code> (변동폭)
- • <b>5분봉 시너지</b> : <code>{score_5m} / 2 점</code>
+ • <b>RSI (14)</b> : <code>{ind.get('rsi', 0):.1f}</code>
+ • <b>ADX (14)</b> : <code>{ind.get('adx', 0):.1f}</code>
+ • <b>ATR (14)</b> : <code>{m(ind.get('atr', 0))}</code>
+ • <b>5분봉 시너지</b> : <code>{ind.get('score_5m', 0)} / 2 점</code>
 
 🎯 <b>목표가 래더 (TP)</b>
  ├ <b>TP1</b> : <code>{m(t1)}</code> ({r1:+.2f}%)
@@ -338,38 +320,63 @@ def monitor(s):
     tv_chart_link = "https://www.tradingview.com/chart/?symbol=COMEX%3AGC1!"
 
     if d == "LONG":
+        # 1. 손절가 도달
         if p <= sl:
             close(s, p, "SL")
-            tg(f"🛡 <b>골드 선물 · 손절(SL) 도달</b>\n━━━━━━━━━━━━━━━━━━━━━━━\n📊 포지션: <b>LONG</b>\n💰 청산가: <code>{m(p)}</code>\n📈 <a href=\"{tv_chart_link}\">차트 확인</a>")
+            tg(f"🛡 <b>골드 선물 · 손절가도달</b>\n━━━━━━━━━━━━━━━━━━━━━━━\n📊 포지션: <b>LONG</b>\n💰 청산가: <code>{m(p)}</code>\n📈 <a href=\"{tv_chart_link}\">차트 확인</a>")
             return
-        if st == "INITIAL" and p >= s["tp1"]:
-            s["stage"] = "TP1_TRAIL"; s["sl"] = s["entry"]; save(STATE, s)
-            tg(f"🎯 <b>골드 선물 · TP1 도달 성공!</b>\n━━━━━━━━━━━━━━━━━━━━━━━\n📊 포지션: <b>LONG</b>\n💰 진입가: <code>{m(s['entry'])}</code>\n🎯 TP1 목표가: <code>{m(s['tp1'])}</code>\n🛡 <b>본전(Entry)으로 손절가(SL) 상향 조정됨</b>\n📈 <a href=\"{tv_chart_link}\">차트 확인</a>")
-            return
-        if st == "TP1_TRAIL" and p >= s["tp2"]:
-            s["stage"] = "TP2_TRAIL"; s["sl"] = s["tp1"]; save(STATE, s)
-            tg(f"🎯 <b>골드 선물 · TP2 도달 성공!</b>\n━━━━━━━━━━━━━━━━━━━━━━━\n📊 포지션: <b>LONG</b>\n🎯 TP2 목표가: <code>{m(s['tp2'])}</code>\n🛡 <b>손절가(SL)가 TP1으로 상향 조정됨</b>\n📈 <a href=\"{tv_chart_link}\">차트 확인</a>")
-            return
-        if st == "TP2_TRAIL" and p >= s["tp3"]:
+            
+        # 2. 3차 목표가 도달 (시그널 종료)
+        if p >= s["tp3"]:
             close(s, p, "TP3_WIN")
-            tg(f"🏆 <b>골드 선물 · TP3 최종 목표가 도달 성공! (WIN)</b>\n━━━━━━━━━━━━━━━━━━━━━━━\n📊 포지션: <b>LONG</b>\n💰 최종 청산가: <code>{m(p)}</code>\n📈 <a href=\"{tv_chart_link}\">차트 확인</a>")
+            tg(f"🏆 <b>골드 선물 · 3차도달 (시그널종료)</b>\n━━━━━━━━━━━━━━━━━━━━━━━\n📊 포지션: <b>LONG</b>\n💰 최종 청산가: <code>{m(p)}</code>\n📈 <a href=\"{tv_chart_link}\">차트 확인</a>")
             return
-    else:
+            
+        # 3. 2차 목표가 도달 (1차를 건너뛴 경우 순차적으로 1차 알림 후 2차 알림 처리)
+        if p >= s["tp2"] and st in ["INITIAL", "TP1_TRAIL"]:
+            if st == "INITIAL":
+                s["stage"] = "TP1_TRAIL"; s["sl"] = s["entry"]; save(STATE, s)
+                tg(f"🎯 <b>골드 선물 · 1차도달</b>\n━━━━━━━━━━━━━━━━━━━━━━━\n📊 포지션: <b>LONG</b>\n💰 진입가: <code>{m(s['entry'])}</code>\n🎯 TP1 목표가: <code>{m(s['tp1'])}</code>\n🛡 <b>본전(Entry)으로 손절가(SL) 상향 조정됨</b>\n📈 <a href=\"{tv_chart_link}\">차트 확인</a>")
+                time.sleep(1)
+            
+            s["stage"] = "TP2_TRAIL"; s["sl"] = s["tp1"]; save(STATE, s)
+            tg(f"🎯 <b>골드 선물 · 2차도달</b>\n━━━━━━━━━━━━━━━━━━━━━━━\n📊 포지션: <b>LONG</b>\n🎯 TP2 목표가: <code>{m(s['tp2'])}</code>\n🛡 <b>손절가(SL)가 TP1으로 상향 조정됨</b>\n📈 <a href=\"{tv_chart_link}\">차트 확인</a>")
+            return
+            
+        # 4. 1차 목표가 도달
+        if p >= s["tp1"] and st == "INITIAL":
+            s["stage"] = "TP1_TRAIL"; s["sl"] = s["entry"]; save(STATE, s)
+            tg(f"🎯 <b>골드 선물 · 1차도달</b>\n━━━━━━━━━━━━━━━━━━━━━━━\n📊 포지션: <b>LONG</b>\n💰 진입가: <code>{m(s['entry'])}</code>\n🎯 TP1 목표가: <code>{m(s['tp1'])}</code>\n🛡 <b>본전(Entry)으로 손절가(SL) 상향 조정됨</b>\n📈 <a href=\"{tv_chart_link}\">차트 확인</a>")
+            return
+
+    else: # SHORT
+        # 1. 손절가 도달
         if p >= sl:
             close(s, p, "SL")
-            tg(f"🛡 <b>골드 선물 · 손절(SL) 도달</b>\n━━━━━━━━━━━━━━━━━━━━━━━\n📊 포지션: <b>SHORT</b>\n💰 청산가: <code>{m(p)}</code>\n📈 <a href=\"{tv_chart_link}\">차트 확인</a>")
+            tg(f"🛡 <b>골드 선물 · 손절가도달</b>\n━━━━━━━━━━━━━━━━━━━━━━━\n📊 포지션: <b>SHORT</b>\n💰 청산가: <code>{m(p)}</code>\n📈 <a href=\"{tv_chart_link}\">차트 확인</a>")
             return
-        if st == "INITIAL" and p <= s["tp1"]:
-            s["stage"] = "TP1_TRAIL"; s["sl"] = s["entry"]; save(STATE, s)
-            tg(f"🎯 <b>골드 선물 · TP1 도달 성공!</b>\n━━━━━━━━━━━━━━━━━━━━━━━\n📊 포지션: <b>SHORT</b>\n💰 진입가: <code>{m(s['entry'])}</code>\n🎯 TP1 목표가: <code>{m(s['tp1'])}</code>\n🛡 <b>본전(Entry)으로 손절가(SL) 상향 조정됨</b>\n📈 <a href=\"{tv_chart_link}\">차트 확인</a>")
-            return
-        if st == "TP1_TRAIL" and p <= s["tp2"]:
-            s["stage"] = "TP2_TRAIL"; s["sl"] = s["tp1"]; save(STATE, s)
-            tg(f"🎯 <b>골드 선물 · TP2 도달 성공!</b>\n━━━━━━━━━━━━━━━━━━━━━━━\n📊 포지션: <b>SHORT</b>\n🎯 TP2 목표가: <code>{m(s['tp2'])}</code>\n🛡 <b>손절가(SL)가 TP1으로 상향 조정됨</b>\n📈 <a href=\"{tv_chart_link}\">차트 확인</a>")
-            return
-        if st == "TP2_TRAIL" and p <= s["tp3"]:
+            
+        # 2. 3차 목표가 도달 (시그널 종료)
+        if p <= s["tp3"]:
             close(s, p, "TP3_WIN")
-            tg(f"🏆 <b>골드 선물 · TP3 최종 목표가 도달 성공! (WIN)</b>\n━━━━━━━━━━━━━━━━━━━━━━━\n📊 포지션: <b>SHORT</b>\n💰 최종 청산가: <code>{m(p)}</code>\n📈 <a href=\"{tv_chart_link}\">차트 확인</a>")
+            tg(f"🏆 <b>골드 선물 · 3차도달 (시그널종료)</b>\n━━━━━━━━━━━━━━━━━━━━━━━\n📊 포지션: <b>SHORT</b>\n💰 최종 청산가: <code>{m(p)}</code>\n📈 <a href=\"{tv_chart_link}\">차트 확인</a>")
+            return
+            
+        # 3. 2차 목표가 도달 (1차를 건너뛴 경우 순차적으로 1차 알림 후 2차 알림 처리)
+        if p <= s["tp2"] and st in ["INITIAL", "TP1_TRAIL"]:
+            if st == "INITIAL":
+                s["stage"] = "TP1_TRAIL"; s["sl"] = s["entry"]; save(STATE, s)
+                tg(f"🎯 <b>골드 선물 · 1차도달</b>\n━━━━━━━━━━━━━━━━━━━━━━━\n📊 포지션: <b>SHORT</b>\n💰 진입가: <code>{m(s['entry'])}</code>\n🎯 TP1 목표가: <code>{m(s['tp1'])}</code>\n🛡 <b>본전(Entry)으로 손절가(SL) 상향 조정됨</b>\n📈 <a href=\"{tv_chart_link}\">차트 확인</a>")
+                time.sleep(1)
+            
+            s["stage"] = "TP2_TRAIL"; s["sl"] = s["tp1"]; save(STATE, s)
+            tg(f"🎯 <b>골드 선물 · 2차도달</b>\n━━━━━━━━━━━━━━━━━━━━━━━\n📊 포지션: <b>SHORT</b>\n🎯 TP2 목표가: <code>{m(s['tp2'])}</code>\n🛡 <b>손절가(SL)가 TP1으로 상향 조정됨</b>\n📈 <a href=\"{tv_chart_link}\">차트 확인</a>")
+            return
+            
+        # 4. 1차 목표가 도달
+        if p <= s["tp1"] and st == "INITIAL":
+            s["stage"] = "TP1_TRAIL"; s["sl"] = s["entry"]; save(STATE, s)
+            tg(f"🎯 <b>골드 선물 · 1차도달</b>\n━━━━━━━━━━━━━━━━━━━━━━━\n📊 포지션: <b>SHORT</b>\n💰 진입가: <code>{m(s['entry'])}</code>\n🎯 TP1 목표가: <code>{m(s['tp1'])}</code>\n🛡 <b>본전(Entry)으로 손절가(SL) 상향 조정됨</b>\n📈 <a href=\"{tv_chart_link}\">차트 확인</a>")
             return
 
 def close(s, p, reason):
