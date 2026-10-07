@@ -1,8 +1,8 @@
-# GOLD FUTURES SMART SIGNAL BOT V20.0.0 (Adaptive Strategy Engine)
+# GOLD FUTURES SMART SIGNAL BOT V20.0.1 (JSON Serialization Fix)
 import os, json, time, requests, yfinance as yf, pandas as pd, numpy as np
 from datetime import datetime, timezone, timedelta
 
-V = "20.0.0"; T = "GC=F"; STATE = "signal_state.json"; LOG = "bot_log.json"
+V = "20.0.1"; T = "GC=F"; STATE = "signal_state.json"; LOG = "bot_log.json"
 TOKEN = os.getenv("TELEGRAM_TOKEN", ""); CHAT = os.getenv("TELEGRAM_CHAT_ID", "")
 KST = timezone(timedelta(hours=9))
 
@@ -14,7 +14,7 @@ RSI_L = (48, 70); RSI_S = (30, 52); BODY = 0.30
 MIN_RISK = 1.0; MAX_RISK = 3.0
 TP = (1.2, 2.0, 3.0); STRONG_TP = (1.5, 2.5, 4.0)
 
-# ===== BACKTEST (현실적인 통과 기준으로 조정) =====
+# ===== BACKTEST =====
 BT_PERIOD = "30d"
 BT_MIN_TRADES = 5
 BT_MIN_WINRATE = 18.0
@@ -23,6 +23,19 @@ BT_MAX_DD = 45.0
 
 # ===== LIVE =====
 PRICE_MAX_AGE = 300
+
+# Numpy/Pandas 데이터 타입을 표준 파이썬 데이터 타입으로 변환하는 JSON Encoder
+class NpEncoder(json.JSONEncoder):
+    def default(self, obj):
+        if isinstance(obj, np.integer):
+            return int(obj)
+        if isinstance(obj, np.floating):
+            return float(obj)
+        if isinstance(obj, np.ndarray):
+            return obj.tolist()
+        if isinstance(obj, (np.bool_, bool)):
+            return bool(obj)
+        return super(NpEncoder, self).default(obj)
 
 def now():
     return datetime.now(KST)
@@ -41,7 +54,7 @@ def m(x):
 def save(p, x):
     q = p + ".tmp"
     with open(q, "w", encoding="utf8") as f:
-        json.dump(x, f, ensure_ascii=False, indent=2)
+        json.dump(x, f, ensure_ascii=False, indent=2, cls=NpEncoder)
     os.replace(q, p)
 
 def load(p, d):
@@ -161,24 +174,24 @@ def evaluate_multi_strategy(x15, x5, d, i=-1):
     r = x15.iloc[i]; p = x15.iloc[i-1]; s = 0
 
     if d == "LONG":
-        s += (r.Close > r.ema20) * 2
-        s += (r.ema20 > r.ema50) * 2
-        s += (r.Close > p.High)
-        s += (RSI_L[0] <= r.rsi <= RSI_L[1])
+        s += int(r.Close > r.ema20) * 2
+        s += int(r.ema20 > r.ema50) * 2
+        s += int(r.Close > p.High)
+        s += int(RSI_L[0] <= r.rsi <= RSI_L[1])
     else:
-        s += (r.Close < r.ema20) * 2
-        s += (r.ema20 < r.ema50) * 2
-        s += (r.Close < p.Low)
-        s += (RSI_S[0] <= r.rsi <= RSI_S[1])
+        s += int(r.Close < r.ema20) * 2
+        s += int(r.ema20 < r.ema50) * 2
+        s += int(r.Close < p.Low)
+        s += int(RSI_S[0] <= r.rsi <= RSI_S[1])
 
     score_5m = 0
     q = x5.loc[:x15.index[i]]
     if len(q) >= 5:
         r5 = q.iloc[-1]
-        if d == "LONG": score_5m += (r5.Close > r5.ema20) + (r5.rsi >= 48)
-        else: score_5m += (r5.Close < r5.ema20) + (r5.rsi <= 52)
+        if d == "LONG": score_5m += int(r5.Close > r5.ema20) + int(r5.rsi >= 48)
+        else: score_5m += int(r5.Close < r5.ema20) + int(r5.rsi <= 52)
 
-    return round(s + score_5m, 1), regime
+    return float(s + score_5m), regime
 
 def levels(x, d, i):
     r = x.iloc[i]; e = float(r.Close)
@@ -245,20 +258,20 @@ def backtest(x15, x5):
             result = "WIN" if (best_d == "LONG" and exit_price > e) or (best_d == "SHORT" and exit_price < e) else "LOSS"
 
         ret = (exit_price - e) / risk if best_d == "LONG" else (e - exit_price) / risk
-        trades.append(ret)
+        trades.append(float(ret))
         last_exit = k
         if ret > 0: wins += 1; gross_win += ret
         elif ret < 0: losses += 1; gross_loss += abs(ret)
 
-    n = len(trades)
+    n = int(len(trades))
     if not n: return {"pass": False, "reason": "NO_TRADES", "trades": 0}
 
-    wr = wins / n * 100
-    pf = gross_win / gross_loss if gross_loss else 99
+    wr = float(wins / n * 100)
+    pf = float(gross_win / gross_loss) if gross_loss else 99.0
     return {
-        "trades": n, "wins": wins, "losses": losses,
+        "trades": int(n), "wins": int(wins), "losses": int(losses),
         "winrate": round(wr, 1), "profit_factor": round(pf, 2),
-        "pass": (n >= BT_MIN_TRADES and wr >= BT_MIN_WINRATE and pf >= BT_MIN_PF)
+        "pass": bool(n >= BT_MIN_TRADES and wr >= BT_MIN_WINRATE and pf >= BT_MIN_PF)
     }
 
 def live():
@@ -343,9 +356,9 @@ def monitor(s):
             return
 
 def close(s, p, reason):
-    s.update({"status": "IDLE", "direction": None, "entry": None, "sl": None, "stage": "INITIAL", "exit_price": p, "exit_reason": reason})
+    s.update({"status": "IDLE", "direction": None, "entry": None, "sl": None, "stage": "INITIAL", "exit_price": float(p), "exit_reason": reason})
     save(STATE, s)
-    log("EXIT", price=p, reason=reason)
+    log("EXIT", price=float(p), reason=reason)
 
 def main():
     print("====================================")
@@ -366,11 +379,11 @@ def main():
     s["backtest"] = bt
     save(STATE, s)
 
-    best_d = None; best_score = 0; best_regime = "UNKNOWN"
+    best_d = None; best_score = 0.0; best_regime = "UNKNOWN"
     for d in ["LONG", "SHORT"]:
         score, regime = evaluate_multi_strategy(x15, x5, d, -1)
         if score > best_score:
-            best_score = score; best_d = d; best_regime = regime
+            best_score = float(score); best_d = d; best_regime = regime
 
     if not best_d or best_score < 3.0:
         print("[SIGNAL] No qualified setup right now.")
@@ -385,8 +398,8 @@ def main():
 
     sig = {
         "status": "ACTIVE", "direction": best_d,
-        "entry": e, "sl": sl, "tp1": t1, "tp2": t2, "tp3": t3,
-        "stage": "INITIAL", "score": best_score,
+        "entry": float(e), "sl": float(sl), "tp1": float(t1), "tp2": float(t2), "tp3": float(t3),
+        "stage": "INITIAL", "score": float(best_score),
         "strength": "STRONG" if strong else "NORMAL",
         "regime": best_regime, "signal_time": ts()
     }
