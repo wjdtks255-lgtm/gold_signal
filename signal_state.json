@@ -19,9 +19,9 @@
     "wins": 16,
     "losses": 48,
     "winrate": 20.3,
-    "profit_factor": 0.85,
+    "profit_factor": 0.86,
     "max_drawdown": 19.55,
-    "net_r": -7.08,
+    "net_r": -6.87,
     "pass": false
   },
   "last_fail_alert_time": 0,
