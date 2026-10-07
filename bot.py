@@ -1,14 +1,14 @@
-# GOLD FUTURES SMART SIGNAL BOT V20.0.1 (JSON Serialization Fix)
+# GOLD FUTURES SMART SIGNAL BOT V20.1.0 (Detailed Alert & Chart Link)
 import os, json, time, requests, yfinance as yf, pandas as pd, numpy as np
 from datetime import datetime, timezone, timedelta
 
-V = "20.0.1"; T = "GC=F"; STATE = "signal_state.json"; LOG = "bot_log.json"
+V = "20.1.0"; T = "GC=F"; STATE = "signal_state.json"; LOG = "bot_log.json"
 TOKEN = os.getenv("TELEGRAM_TOKEN", ""); CHAT = os.getenv("TELEGRAM_CHAT_ID", "")
 KST = timezone(timedelta(hours=9))
 
 # ===== ADAPTIVE STRATEGY PARAMS =====
 ADX_TREND_MIN = 20
-RSI_L = (48, 70); RSI_S = (30, 52); BODY = 0.30
+RSI_L = (48, 70); RSI_S = (30, 52)
 
 # ===== RISK =====
 MIN_RISK = 1.0; MAX_RISK = 3.0
@@ -19,22 +19,14 @@ BT_PERIOD = "30d"
 BT_MIN_TRADES = 5
 BT_MIN_WINRATE = 18.0
 BT_MIN_PF = 0.75
-BT_MAX_DD = 45.0
 
-# ===== LIVE =====
-PRICE_MAX_AGE = 300
-
-# Numpy/Pandas 데이터 타입을 표준 파이썬 데이터 타입으로 변환하는 JSON Encoder
+# JSON Encoder for Numpy/Pandas Types
 class NpEncoder(json.JSONEncoder):
     def default(self, obj):
-        if isinstance(obj, np.integer):
-            return int(obj)
-        if isinstance(obj, np.floating):
-            return float(obj)
-        if isinstance(obj, np.ndarray):
-            return obj.tolist()
-        if isinstance(obj, (np.bool_, bool)):
-            return bool(obj)
+        if isinstance(obj, np.integer): return int(obj)
+        if isinstance(obj, np.floating): return float(obj)
+        if isinstance(obj, np.ndarray): return obj.tolist()
+        if isinstance(obj, (np.bool_, bool)): return bool(obj)
         return super(NpEncoder, self).default(obj)
 
 def now():
@@ -87,7 +79,7 @@ def default():
         "entry": None, "sl": None, "tp1": None, "tp2": None, "tp3": None,
         "stage": "INITIAL", "signal_time": None,
         "exit_price": None, "exit_reason": None,
-        "score": 0, "strength": "NORMAL", "regime": "UNKNOWN", "backtest": {}
+        "score": 0, "strength": "NORMAL", "regime": "UNKNOWN", "indicators": {}, "backtest": {}
     }
 
 def get_state():
@@ -151,9 +143,6 @@ def addind(x):
     x["bb_lower"] = x["bb_mid"] - (bb_std * 2)
     x["bb_width"] = (x["bb_upper"] - x["bb_lower"]) / x["bb_mid"].replace(0, np.nan)
     x["bb_width_ma"] = x["bb_width"].rolling(20).mean().fillna(0.02)
-
-    x["body"] = (x.Close - x.Open).abs() / (x.High - x.Low).replace(0, np.nan)
-    x["pos"] = (x.Close - x.Low) / (x.High - x.Low).replace(0, np.nan)
     return x.fillna(0)
 
 def detect_regime(x, i=-1):
@@ -191,7 +180,16 @@ def evaluate_multi_strategy(x15, x5, d, i=-1):
         if d == "LONG": score_5m += int(r5.Close > r5.ema20) + int(r5.rsi >= 48)
         else: score_5m += int(r5.Close < r5.ema20) + int(r5.rsi <= 52)
 
-    return float(s + score_5m), regime
+    ind_info = {
+        "rsi": float(r.rsi),
+        "adx": float(r.adx),
+        "atr": float(r.atr),
+        "ema20": float(r.ema20),
+        "ema50": float(r.ema50),
+        "score_5m": int(score_5m)
+    }
+
+    return float(s + score_5m), regime, ind_info
 
 def levels(x, d, i):
     r = x.iloc[i]; e = float(r.Close)
@@ -231,7 +229,7 @@ def backtest(x15, x5):
         best_d = None; best_score = 0; best_regime = "UNKNOWN"
 
         for d in ["LONG", "SHORT"]:
-            score, regime = evaluate_multi_strategy(x15, x5, d, i)
+            score, regime, _ = evaluate_multi_strategy(x15, x5, d, i)
             if score > best_score:
                 best_score = score; best_d = d; best_regime = regime
 
@@ -299,13 +297,28 @@ def entry_alert(s):
     r3 = (t3/e-1)*100 if d=="LONG" else (e/t3-1)*100
     rs_loss = (sl/e-1)*100 if d=="LONG" else (e/sl-1)*100
 
-    return f"""⚡ <b>[골드 선물] 신규 스마트 퀀트 시그널 V20</b>
+    ind = s.get("indicators", {})
+    rsi = ind.get("rsi", 0.0)
+    adx = ind.get("adx", 0.0)
+    atr = ind.get("atr", 0.0)
+    score_5m = ind.get("score_5m", 0)
+
+    # TradingView GC1! Chart Link
+    tv_chart_link = "https://www.tradingview.com/chart/?symbol=COMEX%3AGC1!"
+
+    return f"""⚡ <b>[골드 선물] 스마트 퀀트 시그널 V20</b>
 ━━━━━━━━━━━━━━━━━━━━━━━
 🎯 <b>진입 방향</b> : <b>{icon}</b>
-💎 <b>셋업 등급</b> : <b>{s['strength']}</b> (점수: <b>{s['score']}</b>)
-━━━━━━━━━━━━━━━━━━━━━━━
+💎 <b>셋업 등급</b> : <b>{s['strength']}</b> (총점: <b>{s['score']}</b>)
 📊 <b>시장 국면</b> : <code>{s.get('regime')}</code>
- • 진입 가격　 : <code>{m(e)}</code>
+━━━━━━━━━━━━━━━━━━━━━━━
+💰 <b>진입 가격</b> : <code>{m(e)}</code>
+
+⚙️ <b>[ 기술적 분석 지표 (15M / 5M) ]</b>
+ • <b>RSI (14)</b> : <code>{rsi:.1f}</code>
+ • <b>ADX (14)</b> : <code>{adx:.1f}</code> (추세강도)
+ • <b>ATR (14)</b> : <code>{m(atr)}</code> (변동폭)
+ • <b>5분봉 시너지</b> : <code>{score_5m} / 2 점</code>
 
 🎯 <b>목표가 래더 (TP)</b>
  ├ <b>TP1</b> : <code>{m(t1)}</code> ({r1:+.2f}%)
@@ -313,46 +326,50 @@ def entry_alert(s):
  └ <b>TP3</b> : <code>{m(t3)}</code> ({r3:+.2f}%)
 
 🛡 <b>손절가 (SL)</b> : <code>{m(sl)}</code> ({rs_loss:+.2f}%)
-⏱ <code>{now().strftime('%H:%M:%S KST')}</code>"""
+━━━━━━━━━━━━━━━━━━━━━━━
+📈 <a href="{tv_chart_link}"><b>[트레이딩뷰 골드 선물 실시간 차트 열기]</b></a>
+⏱ <code>{now().strftime('%Y-%m-%d %H:%M:%S KST')}</code>"""
 
 def monitor(s):
     p, a, src = live()
     if p is None: return
 
     d = s["direction"]; sl = s["sl"]; st = s["stage"]
+    tv_chart_link = "https://www.tradingview.com/chart/?symbol=COMEX%3AGC1!"
+
     if d == "LONG":
         if p <= sl:
             close(s, p, "SL")
-            tg(f"🛡 <b>골드 선물 · 손절(SL) 도달</b>\n━━━━━━━━━━━━━━━━━━━━━━━\n📊 포지션: <b>LONG</b>\n💰 청산가: <code>{m(p)}</code>")
+            tg(f"🛡 <b>골드 선물 · 손절(SL) 도달</b>\n━━━━━━━━━━━━━━━━━━━━━━━\n📊 포지션: <b>LONG</b>\n💰 청산가: <code>{m(p)}</code>\n📈 <a href=\"{tv_chart_link}\">차트 확인</a>")
             return
         if st == "INITIAL" and p >= s["tp1"]:
             s["stage"] = "TP1_TRAIL"; s["sl"] = s["entry"]; save(STATE, s)
-            tg(f"🎯 <b>골드 선물 · TP1 도달 성공!</b>\n━━━━━━━━━━━━━━━━━━━━━━━\n📊 포지션: <b>LONG</b>\n💰 진입가: <code>{m(s['entry'])}</code>\n🎯 TP1 목표가: <code>{m(s['tp1'])}</code>\n🛡 <b>본전(Entry)으로 손절가(SL) 상향 조정됨</b>")
+            tg(f"🎯 <b>골드 선물 · TP1 도달 성공!</b>\n━━━━━━━━━━━━━━━━━━━━━━━\n📊 포지션: <b>LONG</b>\n💰 진입가: <code>{m(s['entry'])}</code>\n🎯 TP1 목표가: <code>{m(s['tp1'])}</code>\n🛡 <b>본전(Entry)으로 손절가(SL) 상향 조정됨</b>\n📈 <a href=\"{tv_chart_link}\">차트 확인</a>")
             return
         if st == "TP1_TRAIL" and p >= s["tp2"]:
             s["stage"] = "TP2_TRAIL"; s["sl"] = s["tp1"]; save(STATE, s)
-            tg(f"🎯 <b>골드 선물 · TP2 도달 성공!</b>\n━━━━━━━━━━━━━━━━━━━━━━━\n📊 포지션: <b>LONG</b>\n🎯 TP2 목표가: <code>{m(s['tp2'])}</code>\n🛡 <b>손절가(SL)가 TP1으로 상향 조정됨</b>")
+            tg(f"🎯 <b>골드 선물 · TP2 도달 성공!</b>\n━━━━━━━━━━━━━━━━━━━━━━━\n📊 포지션: <b>LONG</b>\n🎯 TP2 목표가: <code>{m(s['tp2'])}</code>\n🛡 <b>손절가(SL)가 TP1으로 상향 조정됨</b>\n📈 <a href=\"{tv_chart_link}\">차트 확인</a>")
             return
         if st == "TP2_TRAIL" and p >= s["tp3"]:
             close(s, p, "TP3_WIN")
-            tg(f"🏆 <b>골드 선물 · TP3 최종 목표가 도달 성공! (WIN)</b>\n━━━━━━━━━━━━━━━━━━━━━━━\n📊 포지션: <b>LONG</b>\n💰 최종 청산가: <code>{m(p)}</code>")
+            tg(f"🏆 <b>골드 선물 · TP3 최종 목표가 도달 성공! (WIN)</b>\n━━━━━━━━━━━━━━━━━━━━━━━\n📊 포지션: <b>LONG</b>\n💰 최종 청산가: <code>{m(p)}</code>\n📈 <a href=\"{tv_chart_link}\">차트 확인</a>")
             return
     else:
         if p >= sl:
             close(s, p, "SL")
-            tg(f"🛡 <b>골드 선물 · 손절(SL) 도달</b>\n━━━━━━━━━━━━━━━━━━━━━━━\n📊 포지션: <b>SHORT</b>\n💰 청산가: <code>{m(p)}</code>")
+            tg(f"🛡 <b>골드 선물 · 손절(SL) 도달</b>\n━━━━━━━━━━━━━━━━━━━━━━━\n📊 포지션: <b>SHORT</b>\n💰 청산가: <code>{m(p)}</code>\n📈 <a href=\"{tv_chart_link}\">차트 확인</a>")
             return
         if st == "INITIAL" and p <= s["tp1"]:
             s["stage"] = "TP1_TRAIL"; s["sl"] = s["entry"]; save(STATE, s)
-            tg(f"🎯 <b>골드 선물 · TP1 도달 성공!</b>\n━━━━━━━━━━━━━━━━━━━━━━━\n📊 포지션: <b>SHORT</b>\n💰 진입가: <code>{m(s['entry'])}</code>\n🎯 TP1 목표가: <code>{m(s['tp1'])}</code>\n🛡 <b>본전(Entry)으로 손절가(SL) 상향 조정됨</b>")
+            tg(f"🎯 <b>골드 선물 · TP1 도달 성공!</b>\n━━━━━━━━━━━━━━━━━━━━━━━\n📊 포지션: <b>SHORT</b>\n💰 진입가: <code>{m(s['entry'])}</code>\n🎯 TP1 목표가: <code>{m(s['tp1'])}</code>\n🛡 <b>본전(Entry)으로 손절가(SL) 상향 조정됨</b>\n📈 <a href=\"{tv_chart_link}\">차트 확인</a>")
             return
         if st == "TP1_TRAIL" and p <= s["tp2"]:
             s["stage"] = "TP2_TRAIL"; s["sl"] = s["tp1"]; save(STATE, s)
-            tg(f"🎯 <b>골드 선물 · TP2 도달 성공!</b>\n━━━━━━━━━━━━━━━━━━━━━━━\n📊 포지션: <b>SHORT</b>\n🎯 TP2 목표가: <code>{m(s['tp2'])}</code>\n🛡 <b>손절가(SL)가 TP1으로 상향 조정됨</b>")
+            tg(f"🎯 <b>골드 선물 · TP2 도달 성공!</b>\n━━━━━━━━━━━━━━━━━━━━━━━\n📊 포지션: <b>SHORT</b>\n🎯 TP2 목표가: <code>{m(s['tp2'])}</code>\n🛡 <b>손절가(SL)가 TP1으로 상향 조정됨</b>\n📈 <a href=\"{tv_chart_link}\">차트 확인</a>")
             return
         if st == "TP2_TRAIL" and p <= s["tp3"]:
             close(s, p, "TP3_WIN")
-            tg(f"🏆 <b>골드 선물 · TP3 최종 목표가 도달 성공! (WIN)</b>\n━━━━━━━━━━━━━━━━━━━━━━━\n📊 포지션: <b>SHORT</b>\n💰 최종 청산가: <code>{m(p)}</code>")
+            tg(f"🏆 <b>골드 선물 · TP3 최종 목표가 도달 성공! (WIN)</b>\n━━━━━━━━━━━━━━━━━━━━━━━\n📊 포지션: <b>SHORT</b>\n💰 최종 청산가: <code>{m(p)}</code>\n📈 <a href=\"{tv_chart_link}\">차트 확인</a>")
             return
 
 def close(s, p, reason):
@@ -379,11 +396,11 @@ def main():
     s["backtest"] = bt
     save(STATE, s)
 
-    best_d = None; best_score = 0.0; best_regime = "UNKNOWN"
+    best_d = None; best_score = 0.0; best_regime = "UNKNOWN"; best_ind = {}
     for d in ["LONG", "SHORT"]:
-        score, regime = evaluate_multi_strategy(x15, x5, d, -1)
+        score, regime, ind = evaluate_multi_strategy(x15, x5, d, -1)
         if score > best_score:
-            best_score = float(score); best_d = d; best_regime = regime
+            best_score = float(score); best_d = d; best_regime = regime; best_ind = ind
 
     if not best_d or best_score < 3.0:
         print("[SIGNAL] No qualified setup right now.")
@@ -401,7 +418,7 @@ def main():
         "entry": float(e), "sl": float(sl), "tp1": float(t1), "tp2": float(t2), "tp3": float(t3),
         "stage": "INITIAL", "score": float(best_score),
         "strength": "STRONG" if strong else "NORMAL",
-        "regime": best_regime, "signal_time": ts()
+        "regime": best_regime, "indicators": best_ind, "signal_time": ts()
     }
 
     s.update(sig)
