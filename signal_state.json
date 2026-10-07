@@ -1,5 +1,5 @@
 {
-  "version": "20.0.1",
+  "version": "20.1.0",
   "status": "ACTIVE",
   "direction": "SHORT",
   "entry": 4142.89990234375,
@@ -14,6 +14,7 @@
   "score": 6.0,
   "strength": "STRONG",
   "regime": "TREND",
+  "indicators": {},
   "backtest": {
     "trades": 97,
     "wins": 33,
