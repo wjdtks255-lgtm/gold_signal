@@ -1,16 +1,16 @@
-# GOLD FUTURES SMART SIGNAL BOT V20.1.3 (Optimized & No-Cooldown)
+# GOLD FUTURES SMART SIGNAL BOT V20.1.4 (Strict State & Single Position Engine)
 import os, json, time, requests, yfinance as yf, pandas as pd, numpy as np
 from datetime import datetime, timezone, timedelta
 
-V = "20.1.3"; T = "GC=F"; STATE = "signal_state.json"; LOG = "bot_log.json"
+V = "20.1.4"; T = "GC=F"; STATE = "signal_state.json"; LOG = "bot_log.json"
 TOKEN = os.getenv("TELEGRAM_TOKEN", ""); CHAT = os.getenv("TELEGRAM_CHAT_ID", "")
 KST = timezone(timedelta(hours=9))
 
-# ===== STRATEGY PARAMS (최적화) =====
+# ===== STRATEGY PARAMS =====
 ADX_TREND_MIN = 18
 RSI_L = (45, 72); RSI_S = (28, 55)
 
-# ===== RISK (골드 노이즈 회피형 넓은 손절/익절) =====
+# ===== RISK =====
 MIN_RISK = 1.5; MAX_RISK = 4.0
 TP = (1.5, 2.5, 4.0); STRONG_TP = (2.0, 3.5, 5.5)
 BT_PERIOD = "30d"
@@ -236,7 +236,7 @@ def entry_alert(s):
     ind = s.get("indicators", {})
     tv_chart_link = "https://www.tradingview.com/chart/?symbol=COMEX%3AGC1!"
 
-    return f"""⚡ <b>[골드 선물] 스마트 퀀트 시그널 V20.1.3</b>
+    return f"""⚡ <b>[골드 선물] 스마트 퀀트 시그널 V{V}</b>
 ━━━━━━━━━━━━━━━━━━━━━━━
 🎯 <b>진입 방향</b> : <b>{icon}</b>
 💎 <b>셋업 등급</b> : <b>{s['strength']}</b> (총점: <b>{s['score']}</b>)
@@ -311,7 +311,12 @@ def monitor(s):
             return
 
 def close(s, p, reason):
-    s.update({"status": "IDLE", "direction": None, "entry": None, "sl": None, "stage": "INITIAL", "exit_price": float(p), "exit_reason": reason})
+    # 포지션이 완전히 종료(TP3 또는 SL)되었을 때만 상태를 IDLE로 전환하여 새로운 신호 허용
+    s.update({
+        "status": "IDLE", "direction": None, "entry": None, "sl": None, 
+        "tp1": None, "tp2": None, "tp3": None, "stage": "INITIAL", 
+        "exit_price": float(p), "exit_reason": reason
+    })
     save(STATE, s)
     log("EXIT", price=float(p), reason=reason)
 
@@ -322,12 +327,14 @@ def main():
 
     s = get_state()
 
-    # 활성 포지션이 있으면 모니터링 수행
+    # 🚨 [핵심 규칙] 현재 포지션이 ACTIVE 상태로 진행 중이라면 새로운 시그널 탐색은 절대 하지 않고 가격 모니터링만 수행
     if s.get("status") == "ACTIVE" and s.get("direction"):
-        print("[MONITOR] Active position found. Checking live price...")
+        print(f"[MONITOR] Active position running ({s.get('direction')} at {s.get('entry')}). Checking live price...")
         monitor(s)
+        return
 
-    print("[SCAN] Searching for new trading setups...")
+    # 🛑 포지션이 완전히 종료되어 IDLE 상태일 때만 새로운 시그널 탐색 시작
+    print("[SCAN] Previous position closed (IDLE). Searching for new trading setups...")
     x15 = addind(getdata("15m", BT_PERIOD))
     x5 = addind(getdata("5m", BT_PERIOD))
 
@@ -341,7 +348,6 @@ def main():
         if score > best_score:
             best_score = float(score); best_d = d; best_regime = regime; best_ind = ind
 
-    # 점수 기준 완화 (2.0점 이상이면 포착)
     if not best_d or best_score < 2.0:
         print("[SIGNAL] No qualified setup right now.")
         return
@@ -353,7 +359,6 @@ def main():
     strong = best_score >= 5.0
     t1, t2, t3 = targets(e, risk, strong, best_d)
 
-    # 쿨다운 없이 언제든 새로운 고품질 세팅이 잡히면 덮어쓰고 알림 발송 가능하도록 수정
     sig = {
         "status": "ACTIVE", "direction": best_d,
         "entry": float(e), "sl": float(sl), "tp1": float(t1), "tp2": float(t2), "tp3": float(t3),
