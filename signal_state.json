@@ -9,6 +9,7 @@
   "tp3": 4071.7356323242198,
   "stage": "TP1_TRAIL",
   "signal_time": "2026-10-14 18:32:02",
+  "hit": [],
   "exit_price": 4185.5,
   "exit_reason": "SL",
   "score": 7.5,
