@@ -73,7 +73,7 @@ def default():
     return {
         "version": V, "status": "IDLE", "direction": None,
         "entry": None, "sl": None, "tp1": None, "tp2": None, "tp3": None,
-        "stage": "INITIAL", "signal_time": None,
+        "stage": "INITIAL", "signal_time": None, "hit": [],
         "exit_price": None, "exit_reason": None,
         "score": 0, "strength": "NORMAL", "regime": "UNKNOWN", "indicators": {}, "backtest": {}
     }
@@ -81,6 +81,7 @@ def default():
 def get_state():
     s = load(STATE, default())
     d = default(); d.update(s); d["version"] = V
+    d.setdefault("hit", [])
     save(STATE, d)
     return d
 
@@ -264,7 +265,8 @@ def monitor(s):
     p, a, src = live()
     if p is None: return
 
-    d = s["direction"]; sl = s["sl"]; st = s["stage"]
+    d = s["direction"]; sl = s["sl"]
+    s.setdefault("hit", [])
     tv_chart_link = "https://www.tradingview.com/chart/?symbol=COMEX%3AGC1!"
 
     if d == "LONG":
@@ -272,49 +274,75 @@ def monitor(s):
             close(s, p, "SL")
             tg(f"🛡 <b>골드 선물 · 손절가 도달</b>\n━━━━━━━━━━━━━━━━━━━━━━━\n📊 포지션: <b>LONG</b>\n💰 청산가: <code>{m(p)}</code>\n📈 <a href=\"{tv_chart_link}\">차트 확인</a>")
             return
+            
         if p >= s["tp3"]:
+            if "TP1" not in s["hit"]:
+                s["hit"].append("TP1")
+                tg(f"🎯 <b>골드 선물 · 1차 목표가 도달</b>\n🛡 <b>본전(Entry)으로 손절가 상향 조정됨</b>\n📈 <a href=\"{tv_chart_link}\">차트 확인</a>")
+                time.sleep(1)
+            if "TP2" not in s["hit"]:
+                s["hit"].append("TP2")
+                tg(f"🎯 <b>골드 선물 · 2차 목표가 도달</b>\n🛡 <b>손절가가 TP1으로 상향 조정됨</b>\n📈 <a href=\"{tv_chart_link}\">차트 확인</a>")
+                time.sleep(1)
             close(s, p, "TP3_WIN")
             tg(f"🏆 <b>골드 선물 · 3차 목표가 도달 (완료)</b>\n━━━━━━━━━━━━━━━━━━━━━━━\n📊 포지션: <b>LONG</b>\n💰 최종 청산가: <code>{m(p)}</code>\n📈 <a href=\"{tv_chart_link}\">차트 확인</a>")
             return
-        if p >= s["tp2"] and st in ["INITIAL", "TP1_TRAIL"]:
-            if st == "INITIAL":
-                s["stage"] = "TP1_TRAIL"; s["sl"] = s["entry"]; save(STATE, s)
+            
+        if p >= s["tp2"] and "TP2" not in s["hit"]:
+            if "TP1" not in s["hit"]:
+                s["hit"].append("TP1")
                 tg(f"🎯 <b>골드 선물 · 1차 목표가 도달</b>\n🛡 <b>본전(Entry)으로 손절가 상향 조정됨</b>\n📈 <a href=\"{tv_chart_link}\">차트 확인</a>")
                 time.sleep(1)
+            s["hit"].append("TP2")
             s["stage"] = "TP2_TRAIL"; s["sl"] = s["tp1"]; save(STATE, s)
             tg(f"🎯 <b>골드 선물 · 2차 목표가 도달</b>\n🛡 <b>손절가가 TP1으로 상향 조정됨</b>\n📈 <a href=\"{tv_chart_link}\">차트 확인</a>")
             return
-        if p >= s["tp1"] and st == "INITIAL":
+            
+        if p >= s["tp1"] and "TP1" not in s["hit"]:
+            s["hit"].append("TP1")
             s["stage"] = "TP1_TRAIL"; s["sl"] = s["entry"]; save(STATE, s)
             tg(f"🎯 <b>골드 선물 · 1차 목표가 도달</b>\n🛡 <b>본전(Entry)으로 손절가 상향 조정됨</b>\n📈 <a href=\"{tv_chart_link}\">차트 확인</a>")
             return
+            
     else: # SHORT
         if p >= sl:
             close(s, p, "SL")
             tg(f"🛡 <b>골드 선물 · 손절가 도달</b>\n━━━━━━━━━━━━━━━━━━━━━━━\n📊 포지션: <b>SHORT</b>\n💰 청산가: <code>{m(p)}</code>\n📈 <a href=\"{tv_chart_link}\">차트 확인</a>")
             return
+            
         if p <= s["tp3"]:
+            if "TP1" not in s["hit"]:
+                s["hit"].append("TP1")
+                tg(f"🎯 <b>골드 선물 · 1차 목표가 도달</b>\n🛡 <b>본전(Entry)으로 손절가 상향 조정됨</b>\n📈 <a href=\"{tv_chart_link}\">차트 확인</a>")
+                time.sleep(1)
+            if "TP2" not in s["hit"]:
+                s["hit"].append("TP2")
+                tg(f"🎯 <b>골드 선물 · 2차 목표가 도달</b>\n🛡 <b>손절가가 TP1으로 상향 조정됨</b>\n📈 <a href=\"{tv_chart_link}\">차트 확인</a>")
+                time.sleep(1)
             close(s, p, "TP3_WIN")
             tg(f"🏆 <b>골드 선물 · 3차 목표가 도달 (완료)</b>\n━━━━━━━━━━━━━━━━━━━━━━━\n📊 포지션: <b>SHORT</b>\n💰 최종 청산가: <code>{m(p)}</code>\n📈 <a href=\"{tv_chart_link}\">차트 확인</a>")
             return
-        if p <= s["tp2"] and st in ["INITIAL", "TP1_TRAIL"]:
-            if st == "INITIAL":
-                s["stage"] = "TP1_TRAIL"; s["sl"] = s["entry"]; save(STATE, s)
+            
+        if p <= s["tp2"] and "TP2" not in s["hit"]:
+            if "TP1" not in s["hit"]:
+                s["hit"].append("TP1")
                 tg(f"🎯 <b>골드 선물 · 1차 목표가 도달</b>\n🛡 <b>본전(Entry)으로 손절가 상향 조정됨</b>\n📈 <a href=\"{tv_chart_link}\">차트 확인</a>")
                 time.sleep(1)
+            s["hit"].append("TP2")
             s["stage"] = "TP2_TRAIL"; s["sl"] = s["tp1"]; save(STATE, s)
             tg(f"🎯 <b>골드 선물 · 2차 목표가 도달</b>\n🛡 <b>손절가가 TP1으로 상향 조정됨</b>\n📈 <a href=\"{tv_chart_link}\">차트 확인</a>")
             return
-        if p <= s["tp1"] and st == "INITIAL":
+            
+        if p <= s["tp1"] and "TP1" not in s["hit"]:
+            s["hit"].append("TP1")
             s["stage"] = "TP1_TRAIL"; s["sl"] = s["entry"]; save(STATE, s)
             tg(f"🎯 <b>골드 선물 · 1차 목표가 도달</b>\n🛡 <b>본전(Entry)으로 손절가 상향 조정됨</b>\n📈 <a href=\"{tv_chart_link}\">차트 확인</a>")
             return
 
 def close(s, p, reason):
-    # 포지션이 완전히 종료(TP3 또는 SL)되었을 때만 상태를 IDLE로 전환하여 새로운 신호 허용
     s.update({
         "status": "IDLE", "direction": None, "entry": None, "sl": None, 
-        "tp1": None, "tp2": None, "tp3": None, "stage": "INITIAL", 
+        "tp1": None, "tp2": None, "tp3": None, "stage": "INITIAL", "hit": [],
         "exit_price": float(p), "exit_reason": reason
     })
     save(STATE, s)
@@ -327,13 +355,11 @@ def main():
 
     s = get_state()
 
-    # 🚨 [핵심 규칙] 현재 포지션이 ACTIVE 상태로 진행 중이라면 새로운 시그널 탐색은 절대 하지 않고 가격 모니터링만 수행
     if s.get("status") == "ACTIVE" and s.get("direction"):
         print(f"[MONITOR] Active position running ({s.get('direction')} at {s.get('entry')}). Checking live price...")
         monitor(s)
         return
 
-    # 🛑 포지션이 완전히 종료되어 IDLE 상태일 때만 새로운 시그널 탐색 시작
     print("[SCAN] Previous position closed (IDLE). Searching for new trading setups...")
     x15 = addind(getdata("15m", BT_PERIOD))
     x5 = addind(getdata("5m", BT_PERIOD))
@@ -364,7 +390,7 @@ def main():
         "entry": float(e), "sl": float(sl), "tp1": float(t1), "tp2": float(t2), "tp3": float(t3),
         "stage": "INITIAL", "score": float(best_score),
         "strength": "STRONG" if strong else "NORMAL",
-        "regime": best_regime, "indicators": best_ind, "signal_time": ts()
+        "regime": best_regime, "indicators": best_ind, "signal_time": ts(), "hit": []
     }
 
     s.update(sig)
