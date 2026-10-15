@@ -1677,5 +1677,11 @@
     "type": "EXIT",
     "price": 4185.5,
     "reason": "SL"
+  },
+  {
+    "time": "2026-10-15 18:38:37",
+    "type": "EXIT",
+    "price": 4180.2998046875,
+    "reason": "SL"
   }
 ]
