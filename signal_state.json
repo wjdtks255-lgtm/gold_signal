@@ -33,5 +33,106 @@
   },
   "setup_hash": null,
   "last_fail_alert_time": 0,
-  "last_stale_alert_time": 0
+  "last_stale_alert_time": 0,
+  "positions": {
+    "GWEI": {
+      "symbol": "GWEI",
+      "direction": "LONG",
+      "entry": 0.021598,
+      "sl": 0.02127403,
+      "tp1": 0.022083955,
+      "tp2": 0.022407925,
+      "tp3": 0.02289388,
+      "tp1_hit": false,
+      "hit": []
+    },
+    "DFDVX": {
+      "symbol": "DFDVX",
+      "direction": "LONG",
+      "entry": 4.166,
+      "sl": 4.10351,
+      "tp1": 4.259735,
+      "tp2": 4.322225,
+      "tp3": 4.41596,
+      "tp1_hit": false,
+      "hit": []
+    },
+    "ZKP": {
+      "symbol": "ZKP",
+      "direction": "LONG",
+      "entry": 0.04589,
+      "sl": 0.04520165,
+      "tp1": 0.046922525,
+      "tp2": 0.047610875,
+      "tp3": 0.0486434,
+      "tp1_hit": false,
+      "hit": []
+    },
+    "IOST": {
+      "symbol": "IOST",
+      "direction": "LONG",
+      "entry": 0.000801,
+      "sl": 0.000788985,
+      "tp1": 0.0008190224999999999,
+      "tp2": 0.0008310374999999999,
+      "tp3": 0.00084906,
+      "tp1_hit": false,
+      "hit": []
+    },
+    "ACN": {
+      "symbol": "ACN",
+      "direction": "LONG",
+      "entry": 225.15,
+      "sl": 221.77275,
+      "tp1": 230.215875,
+      "tp2": 233.59312500000001,
+      "tp3": 238.659,
+      "tp1_hit": false,
+      "hit": []
+    },
+    "SHTECH": {
+      "symbol": "SHTECH",
+      "direction": "SHORT",
+      "entry": 27.52,
+      "sl": 27.9328,
+      "tp1": 26.9008,
+      "tp2": 26.488,
+      "tp3": 25.8688,
+      "tp1_hit": false,
+      "hit": []
+    },
+    "CRV": {
+      "symbol": "CRV",
+      "direction": "LONG",
+      "entry": 0.3523,
+      "sl": 0.3470155,
+      "tp1": 0.36022675,
+      "tp2": 0.36551125,
+      "tp3": 0.373438,
+      "tp1_hit": false,
+      "hit": []
+    },
+    "NVO": {
+      "symbol": "NVO",
+      "direction": "LONG",
+      "entry": 39.57,
+      "sl": 38.97645,
+      "tp1": 40.460325,
+      "tp2": 41.053875,
+      "tp3": 41.9442,
+      "tp1_hit": false,
+      "hit": []
+    }
+  },
+  "signals": {
+    "GWEI:LONG": 1792142629.9694219,
+    "DFDVX:LONG": 1792142629.9694219,
+    "ZKP:LONG": 1792142629.9694219,
+    "IOST:LONG": 1792142629.9694219,
+    "ACN:LONG": 1792142629.9694219,
+    "SHTECH:SHORT": 1792142629.9694219,
+    "CRV:LONG": 1792142629.9694219,
+    "NVO:LONG": 1792142629.9694219
+  },
+  "sl_penalties": {}
 }
