@@ -10,7 +10,7 @@ permissions:
 
 concurrency:
   group: gold-signal-bot
-  cancel-in-progress: true  # 이전 실행 중인 작업이 있으면 취소하고 최신 작업 실행
+  cancel-in-progress: true
 
 jobs:
   scan:
@@ -40,7 +40,6 @@ jobs:
         run: |
           python -u bot.py
 
-      # 커밋 전 최신 main 브랜치 동기화 (Git 충돌 방지)
       - name: Pull latest changes
         run: |
           git config --global user.name "github-actions[bot]"
