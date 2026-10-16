@@ -46,17 +46,6 @@
       "tp1_hit": false,
       "hit": []
     },
-    "DFDVX": {
-      "symbol": "DFDVX",
-      "direction": "LONG",
-      "entry": 4.166,
-      "sl": 4.10351,
-      "tp1": 4.259735,
-      "tp2": 4.322225,
-      "tp3": 4.41596,
-      "tp1_hit": false,
-      "hit": []
-    },
     "ZKP": {
       "symbol": "ZKP",
       "direction": "LONG",
@@ -101,17 +90,6 @@
       "tp1_hit": false,
       "hit": []
     },
-    "CRV": {
-      "symbol": "CRV",
-      "direction": "LONG",
-      "entry": 0.3523,
-      "sl": 0.3470155,
-      "tp1": 0.36022675,
-      "tp2": 0.36551125,
-      "tp3": 0.373438,
-      "tp1_hit": false,
-      "hit": []
-    },
     "NVO": {
       "symbol": "NVO",
       "direction": "LONG",
@@ -120,6 +98,28 @@
       "tp1": 40.460325,
       "tp2": 41.053875,
       "tp3": 41.9442,
+      "tp1_hit": false,
+      "hit": []
+    },
+    "CVX": {
+      "symbol": "CVX",
+      "direction": "LONG",
+      "entry": 2.009,
+      "sl": 1.9788649999999999,
+      "tp1": 2.0542024999999997,
+      "tp2": 2.0843374999999997,
+      "tp3": 2.12954,
+      "tp1_hit": false,
+      "hit": []
+    },
+    "SPY": {
+      "symbol": "SPY",
+      "direction": "LONG",
+      "entry": 774.99,
+      "sl": 763.36515,
+      "tp1": 792.427275,
+      "tp2": 804.052125,
+      "tp3": 821.4894,
       "tp1_hit": false,
       "hit": []
     }
@@ -132,7 +132,12 @@
     "ACN:LONG": 1792142629.9694219,
     "SHTECH:SHORT": 1792142629.9694219,
     "CRV:LONG": 1792142629.9694219,
-    "NVO:LONG": 1792142629.9694219
+    "NVO:LONG": 1792142629.9694219,
+    "CVX:LONG": 1792142697.6190045,
+    "SPY:LONG": 1792142697.6190045
   },
-  "sl_penalties": {}
+  "sl_penalties": {
+    "DFDVX": 1792142691.3687875,
+    "CRV": 1792142695.3414485
+  }
 }
