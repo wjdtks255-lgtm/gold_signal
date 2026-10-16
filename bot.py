@@ -21,6 +21,7 @@ KST = timezone(timedelta(hours=9))
 
 VERSION = "20.2.0"
 SYMBOL = "GC=F"  # 금 선물 티커
+TV_URL = "https://www.tradingview.com/chart/?symbol=GC%3DF"  # 트레이딩뷰 골드 선물 차트 링크
 
 # --------------------------------------------------------------------------- #
 #   2️⃣ 유틸리티 및 안전한 파일 I/O
@@ -67,9 +68,9 @@ def save_state(state: Dict[str, Any]) -> None:
         print(f"[{ts()}] State Save Error: {e}")
 
 # --------------------------------------------------------------------------- #
-#   3️⃣ 텔레그램 알림 시스템
+#   3️⃣ 텔레그램 알림 시스템 (인라인 버튼 링크 지원)
 # --------------------------------------------------------------------------- #
-def send_telegram(text: str) -> bool:
+def send_telegram(text: str, add_chart_btn: bool = False) -> bool:
     if not TOKEN or not CHAT_ID:
         print(f"[{ts()}] TG CONFIG ERROR: Token or Chat ID missing.")
         return False
@@ -82,6 +83,14 @@ def send_telegram(text: str) -> bool:
         "disable_web_page_preview": True,
     }
     
+    # 차트 바로가기 버튼 추가
+    if add_chart_btn:
+        payload["reply_markup"] = {
+            "inline_keyboard": [
+                [{"text": "📈 트레이딩뷰 차트 보기 (GC=F)", "url": TV_URL}]
+            ]
+        }
+
     for attempt in range(3):
         try:
             res = requests.post(url, json=payload, timeout=20)
@@ -96,7 +105,6 @@ def send_telegram(text: str) -> bool:
 #   4️⃣ 금 선물 데이터 수집 및 지표 계산
 # --------------------------------------------------------------------------- #
 def fetch_gold_data() -> pd.DataFrame:
-    """Yahoo Finance에서 골드 선물(GC=F) 15분봉 데이터 수집"""
     try:
         ticker = yf.Ticker(SYMBOL)
         df = ticker.history(period="5d", interval="15m")
@@ -112,14 +120,12 @@ def calculate_indicators(df: pd.DataFrame) -> pd.DataFrame:
     if df.empty or len(df) < 20:
         return df
     
-    # RSI 계산
     delta = df['close'].diff()
     gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
     loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
     rs = gain / (loss + 1e-9)
     df['rsi'] = 100 - (100 / (1 + rs))
     
-    # ATR 계산
     high_low = df['high'] - df['low']
     high_close = np.abs(df['high'] - df['close'].shift())
     low_close = np.abs(df['low'] - df['close'].shift())
@@ -156,7 +162,6 @@ def process_gold_signal():
 
     pos = state.get("position")
 
-    # 이미 보유 중인 포지션이 있는 경우 TP/SL 감시
     if pos:
         long = pos["direction"] == "LONG"
         high_p = float(latest['high'])
@@ -164,38 +169,36 @@ def process_gold_signal():
 
         if long:
             if high_p >= pos["tp3"]:
-                send_telegram(f"🎉 *[골드 선물 TP3 최종 익절 달성!]*\n💰 가격: `{fmt_money(high_p)}`")
+                send_telegram(f"🎉 *[골드 선물 TP3 최종 익절 달성!]*\n💰 가격: `{fmt_money(high_p)}`", add_chart_btn=True)
                 state["position"] = None
             elif low_p <= pos["sl"]:
-                send_telegram(f"🛡️ *[골드 선물 손절(SL) 도달]*\n📉 가격: `{fmt_money(low_p)}`")
+                send_telegram(f"🛡️ *[골드 선물 손절(SL) 도달]*\n📉 가격: `{fmt_money(low_p)}`", add_chart_btn=True)
                 state["position"] = None
             elif high_p >= pos["tp2"] and "TP2" not in pos.get("hit", []):
-                send_telegram(f"🎯 *[골드 선물 TP2 2차 익절 도달]*\n💰 가격: `{fmt_money(high_p)}`")
+                send_telegram(f"🎯 *[골드 선물 TP2 2차 익절 도달]*\n💰 가격: `{fmt_money(high_p)}`", add_chart_btn=True)
                 pos.setdefault("hit", []).append("TP2")
             elif not pos.get("tp1_hit", False) and high_p >= pos["tp1"]:
                 pos["tp1_hit"] = True
-                pos["sl"] = pos["entry"] # 본전 스탑 상향
-                send_telegram(f"🎯 *[골드 선물 TP1 1차 익절 & 본전스탑]*\n🛡️ 손절가를 진입가로 상향합니다.")
+                pos["sl"] = pos["entry"]
+                send_telegram(f"🎯 *[골드 선물 TP1 1차 익절 & 본전스탑]*\n🛡️ 손절가를 진입가로 상향합니다.", add_chart_btn=True)
         else:
             if low_p <= pos["tp3"]:
-                send_telegram(f"🎉 *[골드 선물 숏 TP3 최종 익절 달성!]*")
+                send_telegram(f"🎉 *[골드 선물 숏 TP3 최종 익절 달성!]*", add_chart_btn=True)
                 state["position"] = None
             elif high_p >= pos["sl"]:
-                send_telegram(f"🛡️ *[골드 선물 숏 손절(SL) 도달]*")
+                send_telegram(f"🛡️ *[골드 선물 숏 손절(SL) 도달]*", add_chart_btn=True)
                 state["position"] = None
             elif low_p <= pos["tp2"] and "TP2" not in pos.get("hit", []):
-                send_telegram(f"🎯 *[골드 선물 숏 TP2 도달]*")
+                send_telegram(f"🎯 *[골드 선물 숏 TP2 도달]*", add_chart_btn=True)
                 pos.setdefault("hit", []).append("TP2")
             elif not pos.get("tp1_hit", False) and low_p <= pos["tp1"]:
                 pos["tp1_hit"] = True
                 pos["sl"] = pos["entry"]
-                send_telegram(f"🎯 *[골드 선물 숏 TP1 1차 익절 & 본전스탑]*")
+                send_telegram(f"🎯 *[골드 선물 숏 TP1 1차 익절 & 본전스탑]*", add_chart_btn=True)
 
         save_state(state)
         return
 
-    # 신규 포지션 진입 조건 판별 (RSI 기반 예시)
-    # RSI 과매도(35 이하) -> 롱, 과매수(65 이상) -> 숏
     direction = None
     if rsi <= 38:
         direction = "LONG"
@@ -232,7 +235,7 @@ def process_gold_signal():
             f"⏱️ 시간: `{ts()} (KST)`"
         )
 
-        if send_telegram(msg):
+        if send_telegram(msg, add_chart_btn=True):
             state["position"] = {
                 "direction": direction,
                 "entry": price,
@@ -244,7 +247,7 @@ def process_gold_signal():
                 "hit": []
             }
             save_state(state)
-            print(f"[{ts()}] Gold Signal Sent successfully.")
+            print(f"[{ts()}] Gold Signal Sent successfully with chart link.")
 
 def main():
     print(f"===================================")
