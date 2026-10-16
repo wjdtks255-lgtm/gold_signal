@@ -1,4 +1,4 @@
-Name: 골드 선물 봇
+name: 골드 선물 봇
 
 on:
   workflow_dispatch:
@@ -123,5 +123,5 @@ jobs:
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
           commit_message: "Update gold bot state and logs"
-          file_pattern: "bot_state.json bot_log.json"
+          file_pattern: "signal_state.json bot_log.json"
           branch: main
