@@ -19,9 +19,10 @@ BASE_DIR = Path.cwd()
 STATE_FILE = BASE_DIR / "signal_state.json"
 KST = timezone(timedelta(hours=9))
 
-VERSION = "20.3.0"
+VERSION = "20.4.0"
 SYMBOL = "GC=F"  # 금 선물 티커
-TV_URL = "https://www.tradingview.com/chart/?symbol=GC%3DF"
+# 트레이딩뷰 앱에서 다른 종목으로 튀는 현상을 방지하기 위해 COMEX 선물 연속물 심볼로 강제 지정
+TV_URL = "https://www.tradingview.com/chart/?symbol=COMEX%3AGC1%21"
 
 # --------------------------------------------------------------------------- #
 #   2️⃣ 유틸리티 및 안전한 파일 I/O
@@ -84,7 +85,7 @@ def send_telegram(text: str, add_chart_btn: bool = False) -> bool:
     if add_chart_btn:
         payload["reply_markup"] = {
             "inline_keyboard": [
-                [{"text": "📈 트레이딩뷰 차트 보기 (GC=F)", "url": TV_URL}]
+                [{"text": "📈 트레이딩뷰 골드 차트 바로가기", "url": TV_URL}]
             ]
         }
 
@@ -99,12 +100,11 @@ def send_telegram(text: str, add_chart_btn: bool = False) -> bool:
     return False
 
 # --------------------------------------------------------------------------- #
-#   4️⃣ 금 선물 데이터 수집 (1분봉 기준)
+#   4️⃣ 금 선물 데이터 수집 (1분봉 기준 실시간성 강화)
 # --------------------------------------------------------------------------- #
 def fetch_gold_data() -> pd.DataFrame:
     try:
         ticker = yf.Ticker(SYMBOL)
-        # 1분봉(1m)으로 변경하여 최근 가격 변동을 민감하게 포착
         df = ticker.history(period="1d", interval="1m")
         if df.empty:
             return pd.DataFrame()
@@ -155,7 +155,7 @@ def process_gold_signal():
     rsi = float(latest['rsi']) if 'rsi' in latest and not np.isnan(latest['rsi']) else 50.0
     atr = float(latest['atr']) if 'atr' in latest and not np.isnan(latest['atr']) else price * 0.005
     
-    # 1분봉 내에서의 고가/저가 탐색 (가장 최근 3개 1분봉 고저가 합산으로 꼬리 도달 체크)
+    # 최근 1분봉들의 고점/저점을 검사하여 스파이크성 도달도 놓치지 않도록 방어
     recent_high = float(df['high'].tail(3).max())
     recent_low = float(df['low'].tail(3).min())
 
@@ -163,44 +163,33 @@ def process_gold_signal():
 
     pos = state.get("position")
 
-    # --------------------------------------------------
-    # A. 이미 포지션이 존재하는 경우 (TP/SL 추적)
-    # --------------------------------------------------
     if pos:
         long = pos["direction"] == "LONG"
 
         if long:
-            # LONG TP3
             if recent_high >= pos["tp3"]:
                 send_telegram(f"🎉 *[골드 선물 LONG TP3 최종 익절 달성!]*\n💰 도달가: `{fmt_money(recent_high)}`", add_chart_btn=True)
                 state["position"] = None
-            # LONG SL
             elif recent_low <= pos["sl"]:
                 send_telegram(f"🛡️ *[골드 선물 LONG 손절(SL) 도달]*\n📉 도달가: `{fmt_money(recent_low)}`", add_chart_btn=True)
                 state["position"] = None
-            # LONG TP2
             elif recent_high >= pos["tp2"] and "TP2" not in pos.get("hit", []):
                 send_telegram(f"🎯 *[골드 선물 LONG TP2 2차 익절 도달]*\n💰 도달가: `{fmt_money(recent_high)}`", add_chart_btn=True)
                 pos.setdefault("hit", []).append("TP2")
-            # LONG TP1 (본전 스탑)
             elif not pos.get("tp1_hit", False) and recent_high >= pos["tp1"]:
                 pos["tp1_hit"] = True
-                pos["sl"] = pos["entry"]  # 손절가를 진입가로 변경
+                pos["sl"] = pos["entry"]
                 send_telegram(f"🎯 *[골드 선물 LONG TP1 도달 & 본전스탑 설정]*\n🛡️ 손절가가 진입가(`{fmt_money(pos['entry'])}`)로 수정되었습니다.", add_chart_btn=True)
         else:
-            # SHORT TP3
             if recent_low <= pos["tp3"]:
                 send_telegram(f"🎉 *[골드 선물 SHORT TP3 최종 익절 달성!]*\n💰 도달가: `{fmt_money(recent_low)}`", add_chart_btn=True)
                 state["position"] = None
-            # SHORT SL
             elif recent_high >= pos["sl"]:
                 send_telegram(f"🛡️ *[골드 선물 SHORT 손절(SL) 도달]*\n📉 도달가: `{fmt_money(recent_high)}`", add_chart_btn=True)
                 state["position"] = None
-            # SHORT TP2
             elif recent_low <= pos["tp2"] and "TP2" not in pos.get("hit", []):
                 send_telegram(f"🎯 *[골드 선물 SHORT TP2 2차 익절 도달]*\n💰 도달가: `{fmt_money(recent_low)}`", add_chart_btn=True)
                 pos.setdefault("hit", []).append("TP2")
-            # SHORT TP1 (본전 스탑)
             elif not pos.get("tp1_hit", False) and recent_low <= pos["tp1"]:
                 pos["tp1_hit"] = True
                 pos["sl"] = pos["entry"]
@@ -209,13 +198,10 @@ def process_gold_signal():
         save_state(state)
         return
 
-    # --------------------------------------------------
-    # B. 포지션이 없는 경우 (신규 진입 탐지)
-    # --------------------------------------------------
     direction = None
-    if rsi <= 35:  # 과매도 진입
+    if rsi <= 35:
         direction = "LONG"
-    elif rsi >= 65: # 과매수 진입
+    elif rsi >= 65:
         direction = "SHORT"
 
     if direction:
