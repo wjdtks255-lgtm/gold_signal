@@ -17,12 +17,13 @@ TOKEN = os.getenv("TELEGRAM_TOKEN", "").strip()
 CHAT_ID = (os.getenv("TELEGRAM_CHAT_ID") or os.getenv("CHAT_ID") or "").strip()
 
 BASE_DIR = Path.cwd()
-STATE_FILE = BASE_DIR / "bot_state.json"
+STATE_FILE = BASE_DIR / "signal_state.json"  # 레포지토리의 파일명과 일치시킴
 KST = timezone(timedelta(hours=9))
 
 MAX_SLOTS = 8
 COOLDOWN_MINUTES = 120
 SL_PENALTY_HOURS = 12
+VERSION = "20.2.0"
 
 # --------------------------------------------------------------------------- #
 #   2️⃣ 유틸리티 및 안전한 파일 I/O (Atomic Write & Safe Load)
@@ -231,7 +232,7 @@ def check_active_positions(state: Dict[str, Any]) -> None:
 # --------------------------------------------------------------------------- #
 def main():
     print(f"===================================")
-    print(f" SMART SIGNAL BOT v20.2.0 RUNNING")
+    print(f" SMART SIGNAL BOT v{VERSION} RUNNING")
     print(f"===================================")
     
     state = load_state()
