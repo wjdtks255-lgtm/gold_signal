@@ -82,7 +82,6 @@ def send_performance_report(state: Dict[str, Any]) -> None:
     breakevens = state.get("breakevens", 0)
     losses = state.get("losses", 0)
     
-    # 승률 계산 (승리 / 전체 거래 기준, 또는 방어 포함 실효 승률 계산 가능)
     win_rate = (wins / total * 100) if total > 0 else 0.0
     
     report_text = (
@@ -168,7 +167,7 @@ def fmt_money(v: Any) -> str:
         return "$0.00"
 
 # --------------------------------------------------------------------------- #
-#   5️⃣ 포지션 및 TP/SL 즉시 감지 엔진
+#   5️⃣ 포지션 및 TP/SL 단계별 독립 감지 엔진
 # --------------------------------------------------------------------------- #
 def process_gold_signal():
     state = load_state()
@@ -184,7 +183,6 @@ def process_gold_signal():
     rsi = float(latest['rsi']) if 'rsi' in latest and not np.isnan(latest['rsi']) else 50.0
     atr = float(latest['atr']) if 'atr' in latest and not np.isnan(latest['atr']) else price * 0.005
     
-    # yfinance 지연 대응: 최근 15분간의 최고가/최저가 스캔
     recent_high = float(df['high'].tail(15).max())
     recent_low = float(df['low'].tail(15).min())
 
@@ -194,10 +192,43 @@ def process_gold_signal():
 
     if pos:
         long = pos["direction"] == "LONG"
+        hit_list = pos.setdefault("hit", [])
 
         if long:
-            if recent_high >= pos["tp3"]:
-                # 익절 성공 (승리)
+            # 1. TP1 도달 체크
+            if "TP1" not in hit_list and recent_high >= pos["tp1"]:
+                hit_list.append("TP1")
+                pos["tp1_hit"] = True
+                pos["sl"] = pos["entry"]
+                send_telegram(
+                    f"🎯 *[골드 선물 LONG - TP1 도달 & 본전스탑]*\n"
+                    f"━━━━━━━━━━━━━━━━━━━━━━\n"
+                    f"🪙 종목: `Gold Futures (GC=F)`\n"
+                    f"💰 도달가: `{fmt_money(recent_high)}`\n"
+                    f"🛡️ 조치: 손절가를 진입가(`{fmt_money(pos['entry'])}`)로 수정했습니다.\n"
+                    f"⏱️ 시간: `{ts()} (KST)`", 
+                    add_chart_btn=True
+                )
+                save_state(state)
+                time.sleep(1)
+
+            # 2. TP2 도달 체크
+            if "TP2" not in hit_list and recent_high >= pos["tp2"]:
+                hit_list.append("TP2")
+                send_telegram(
+                    f"🎯 *[골드 선물 LONG TP2 2차 익절 도달]*\n"
+                    f"━━━━━━━━━━━━━━━━━━━━━━\n"
+                    f"🪙 종목: `Gold Futures (GC=F)`\n"
+                    f"💰 도달가: `{fmt_money(recent_high)}`\n"
+                    f"⏱️ 시간: `{ts()} (KST)`", 
+                    add_chart_btn=True
+                )
+                save_state(state)
+                time.sleep(1)
+
+            # 3. TP3 최종 익절 체크
+            if "TP3" not in hit_list and recent_high >= pos["tp3"]:
+                hit_list.append("TP3")
                 state["total_trades"] = state.get("total_trades", 0) + 1
                 state["wins"] = state.get("wins", 0) + 1
                 
@@ -212,10 +243,12 @@ def process_gold_signal():
                 time.sleep(1.5)
                 send_performance_report(state)
                 state["position"] = None
+                save_state(state)
+                return
 
-            elif recent_low <= pos["sl"]:
+            # 4. SL 손절 / 본전 마감 체크
+            if recent_low <= pos["sl"]:
                 if pos.get("tp1_hit", False):
-                    # 본전 마감 (Breakeven - 방어 성공)
                     state["total_trades"] = state.get("total_trades", 0) + 1
                     state["breakevens"] = state.get("breakevens", 0) + 1
                     
@@ -230,7 +263,6 @@ def process_gold_signal():
                     time.sleep(1.5)
                     send_performance_report(state)
                 else:
-                    # 일반 손절 (실패)
                     state["total_trades"] = state.get("total_trades", 0) + 1
                     state["losses"] = state.get("losses", 0) + 1
                     
@@ -246,25 +278,44 @@ def process_gold_signal():
                     send_performance_report(state)
                 
                 state["position"] = None
+                save_state(state)
+                return
 
-            elif recent_high >= pos["tp2"] and "TP2" not in pos.get("hit", []):
-                send_telegram(f"🎯 *[골드 선물 LONG TP2 2차 익절 도달]*\n💰 도달가: `{fmt_money(recent_high)}`", add_chart_btn=True)
-                pos.setdefault("hit", []).append("TP2")
-            elif not pos.get("tp1_hit", False) and recent_high >= pos["tp1"]:
+        else: # SHORT 포지션
+            # 1. TP1 도달 체크
+            if "TP1" not in hit_list and recent_low <= pos["tp1"]:
+                hit_list.append("TP1")
                 pos["tp1_hit"] = True
                 pos["sl"] = pos["entry"]
                 send_telegram(
-                    f"🎯 *[골드 선물 LONG - TP1 도달 & 본전스탑]*\n"
+                    f"🎯 *[골드 선물 SHORT - TP1 도달 & 본전스탑]*\n"
                     f"━━━━━━━━━━━━━━━━━━━━━━\n"
                     f"🪙 종목: `Gold Futures (GC=F)`\n"
-                    f"💰 도달가: `{fmt_money(recent_high)}`\n"
+                    f"💰 도달가: `{fmt_money(recent_low)}`\n"
                     f"🛡️ 조치: 손절가를 진입가(`{fmt_money(pos['entry'])}`)로 수정했습니다.\n"
                     f"⏱️ 시간: `{ts()} (KST)`", 
                     add_chart_btn=True
                 )
-        else:
-            if recent_low <= pos["tp3"]:
-                # 익절 성공 (승리)
+                save_state(state)
+                time.sleep(1)
+
+            # 2. TP2 도달 체크
+            if "TP2" not in hit_list and recent_low <= pos["tp2"]:
+                hit_list.append("TP2")
+                send_telegram(
+                    f"🎯 *[골드 선물 SHORT TP2 2차 익절 도달]*\n"
+                    f"━━━━━━━━━━━━━━━━━━━━━━\n"
+                    f"🪙 종목: `Gold Futures (GC=F)`\n"
+                    f"💰 도달가: `{fmt_money(recent_low)}`\n"
+                    f"⏱️ 시간: `{ts()} (KST)`", 
+                    add_chart_btn=True
+                )
+                save_state(state)
+                time.sleep(1)
+
+            # 3. TP3 최종 익절 체크
+            if "TP3" not in hit_list and recent_low <= pos["tp3"]:
+                hit_list.append("TP3")
                 state["total_trades"] = state.get("total_trades", 0) + 1
                 state["wins"] = state.get("wins", 0) + 1
                 
@@ -279,10 +330,12 @@ def process_gold_signal():
                 time.sleep(1.5)
                 send_performance_report(state)
                 state["position"] = None
+                save_state(state)
+                return
 
-            elif recent_high >= pos["sl"]:
+            # 4. SL 손절 / 본전 마감 체크
+            if recent_high >= pos["sl"]:
                 if pos.get("tp1_hit", False):
-                    # 본전 마감 (Breakeven - 방어 성공)
                     state["total_trades"] = state.get("total_trades", 0) + 1
                     state["breakevens"] = state.get("breakevens", 0) + 1
                     
@@ -297,7 +350,6 @@ def process_gold_signal():
                     time.sleep(1.5)
                     send_performance_report(state)
                 else:
-                    # 일반 손절 (실패)
                     state["total_trades"] = state.get("total_trades", 0) + 1
                     state["losses"] = state.get("losses", 0) + 1
                     
@@ -313,26 +365,13 @@ def process_gold_signal():
                     send_performance_report(state)
                 
                 state["position"] = None
-
-            elif recent_low <= pos["tp2"] and "TP2" not in pos.get("hit", []):
-                send_telegram(f"🎯 *[골드 선물 SHORT TP2 2차 익절 도달]*\n💰 도달가: `{fmt_money(recent_low)}`", add_chart_btn=True)
-                pos.setdefault("hit", []).append("TP2")
-            elif not pos.get("tp1_hit", False) and recent_low <= pos["tp1"]:
-                pos["tp1_hit"] = True
-                pos["sl"] = pos["entry"]
-                send_telegram(
-                    f"🎯 *[골드 선물 SHORT - TP1 도달 & 본전스탑]*\n"
-                    f"━━━━━━━━━━━━━━━━━━━━━━\n"
-                    f"🪙 종목: `Gold Futures (GC=F)`\n"
-                    f"💰 도달가: `{fmt_money(recent_low)}`\n"
-                    f"🛡️ 조치: 손절가를 진입가(`{fmt_money(pos['entry'])}`)로 수정했습니다.\n"
-                    f"⏱️ 시간: `{ts()} (KST)`", 
-                    add_chart_btn=True
-                )
+                save_state(state)
+                return
 
         save_state(state)
         return
 
+    # 신규 진입 스캔
     direction = None
     if rsi <= 35:
         direction = "LONG"
