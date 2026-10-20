@@ -19,13 +19,12 @@ BASE_DIR = Path.cwd()
 STATE_FILE = BASE_DIR / "signal_state.json"
 KST = timezone(timedelta(hours=9))
 
-VERSION = "20.4.0"
+VERSION = "20.6.0"
 SYMBOL = "GC=F"  # 금 선물 티커
-# 트레이딩뷰 앱에서 다른 종목으로 튀는 현상을 방지하기 위해 COMEX 선물 연속물 심볼로 강제 지정
 TV_URL = "https://www.tradingview.com/chart/?symbol=COMEX%3AGC1%21"
 
 # --------------------------------------------------------------------------- #
-#   2️⃣ 유틸리티 및 안전한 파일 I/O
+#   2️⃣ 유틸리티 및 안전한 파일 I/O (승패 통계 필드 포함)
 # --------------------------------------------------------------------------- #
 class NpEncoder(json.JSONEncoder):
     def default(self, obj: Any) -> Any:
@@ -46,13 +45,23 @@ def ts() -> str:
     return now().strftime("%Y-%m-%d %H:%M:%S")
 
 def load_state() -> Dict[str, Any]:
-    default_state = {"position": None, "last_signal_time": 0}
+    default_state = {
+        "position": None,
+        "last_signal_time": 0,
+        "total_trades": 0,  # 총 거래 횟수
+        "wins": 0,          # 승리 횟수 (TP3 달성)
+        "losses": 0         # 패배 횟수 (SL 도달)
+    }
     if not STATE_FILE.exists():
         return default_state
     try:
         with STATE_FILE.open("r", encoding="utf-8") as f:
             data = json.load(f)
-            return data if isinstance(data, dict) else default_state
+            if not isinstance(data, dict):
+                return default_state
+            for k, v in default_state.items():
+                data.setdefault(k, v)
+            return data
     except Exception as e:
         print(f"[{ts()}] State Load Error: {e}")
         return default_state
@@ -65,6 +74,24 @@ def save_state(state: Dict[str, Any]) -> None:
         tmp_file.replace(STATE_FILE)
     except Exception as e:
         print(f"[{ts()}] State Save Error: {e}")
+
+# 독립된 성적표 메시지 생성 함수
+def send_performance_report(state: Dict[str, Any]) -> None:
+    total = state.get("total_trades", 0)
+    wins = state.get("wins", 0)
+    losses = state.get("losses", 0)
+    win_rate = (wins / total * 100) if total > 0 else 0.0
+    
+    report_text = (
+        f"📊 *[Trading Performance Report]*\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"  • Total Trades: `{total}회`\n"
+        f"  • Win / Loss: `{wins}승 {losses}패`\n"
+        f"  • Win Rate: **`{win_rate:.1f}%`**\n"
+        f"⏱️ 시간: `{ts()} (KST)`"
+    )
+    # 성적표는 차트 버튼 없이 텍스트 단독으로 전송
+    send_telegram(report_text, add_chart_btn=False)
 
 # --------------------------------------------------------------------------- #
 #   3️⃣ 텔레그램 알림 시스템
@@ -100,7 +127,7 @@ def send_telegram(text: str, add_chart_btn: bool = False) -> bool:
     return False
 
 # --------------------------------------------------------------------------- #
-#   4️⃣ 금 선물 데이터 수집 (1분봉 기준 실시간성 강화)
+#   4️⃣ 금 선물 데이터 수집 (1분봉 기준)
 # --------------------------------------------------------------------------- #
 def fetch_gold_data() -> pd.DataFrame:
     try:
@@ -155,7 +182,6 @@ def process_gold_signal():
     rsi = float(latest['rsi']) if 'rsi' in latest and not np.isnan(latest['rsi']) else 50.0
     atr = float(latest['atr']) if 'atr' in latest and not np.isnan(latest['atr']) else price * 0.005
     
-    # 최근 1분봉들의 고점/저점을 검사하여 스파이크성 도달도 놓치지 않도록 방어
     recent_high = float(df['high'].tail(3).max())
     recent_low = float(df['low'].tail(3).min())
 
@@ -168,10 +194,42 @@ def process_gold_signal():
 
         if long:
             if recent_high >= pos["tp3"]:
-                send_telegram(f"🎉 *[골드 선물 LONG TP3 최종 익절 달성!]*\n💰 도달가: `{fmt_money(recent_high)}`", add_chart_btn=True)
+                # 승리(WIN) 카운트 증가
+                state["total_trades"] = state.get("total_trades", 0) + 1
+                state["wins"] = state.get("wins", 0) + 1
+                
+                # 1. TP3 마감 알림 전송 (차트 버튼 포함)
+                send_telegram(
+                    f"🎉 *[골드 선물 LONG - TP3 최종 익절 달성]*\n"
+                    f"━━━━━━━━━━━━━━━━━━━━━━\n"
+                    f"🪙 종목: `Gold Futures (GC=F)`\n"
+                    f"💰 최종 도달가: `{fmt_money(recent_high)}`\n"
+                    f"⏱️ 시간: `{ts()} (KST)`", 
+                    add_chart_btn=True
+                )
+                time.sleep(1) # 메시지 순서 꼬임 방지
+                # 2. 성적표 독립 메시지 전송
+                send_performance_report(state)
+                
                 state["position"] = None
             elif recent_low <= pos["sl"]:
-                send_telegram(f"🛡️ *[골드 선물 LONG 손절(SL) 도달]*\n📉 도달가: `{fmt_money(recent_low)}`", add_chart_btn=True)
+                # 패배(LOSS) 카운트 증가
+                state["total_trades"] = state.get("total_trades", 0) + 1
+                state["losses"] = state.get("losses", 0) + 1
+                
+                # 1. SL 손절 알림 전송 (차트 버튼 포함)
+                send_telegram(
+                    f"🛡️ *[골드 선물 LONG - 손절(SL) 도달]*\n"
+                    f"━━━━━━━━━━━━━━━━━━━━━━\n"
+                    f"🪙 종목: `Gold Futures (GC=F)`\n"
+                    f"📉 최종 도달가: `{fmt_money(recent_low)}`\n"
+                    f"⏱️ 시간: `{ts()} (KST)`", 
+                    add_chart_btn=True
+                )
+                time.sleep(1)
+                # 2. 성적표 독립 메시지 전송
+                send_performance_report(state)
+                
                 state["position"] = None
             elif recent_high >= pos["tp2"] and "TP2" not in pos.get("hit", []):
                 send_telegram(f"🎯 *[골드 선물 LONG TP2 2차 익절 도달]*\n💰 도달가: `{fmt_money(recent_high)}`", add_chart_btn=True)
@@ -179,13 +237,53 @@ def process_gold_signal():
             elif not pos.get("tp1_hit", False) and recent_high >= pos["tp1"]:
                 pos["tp1_hit"] = True
                 pos["sl"] = pos["entry"]
-                send_telegram(f"🎯 *[골드 선물 LONG TP1 도달 & 본전스탑 설정]*\n🛡️ 손절가가 진입가(`{fmt_money(pos['entry'])}`)로 수정되었습니다.", add_chart_btn=True)
+                send_telegram(
+                    f"🎯 *[골드 선물 LONG - TP1 도달 & 본전스탑]*\n"
+                    f"━━━━━━━━━━━━━━━━━━━━━━\n"
+                    f"🪙 종목: `Gold Futures (GC=F)`\n"
+                    f"💰 도달가: `{fmt_money(recent_high)}`\n"
+                    f"🛡️ 조치: 손절가를 진입가(`{fmt_money(pos['entry'])}`)로 수정했습니다.\n"
+                    f"⏱️ 시간: `{ts()} (KST)`", 
+                    add_chart_btn=True
+                )
         else:
             if recent_low <= pos["tp3"]:
-                send_telegram(f"🎉 *[골드 선물 SHORT TP3 최종 익절 달성!]*\n💰 도달가: `{fmt_money(recent_low)}`", add_chart_btn=True)
+                # 승리(WIN) 카운트 증가
+                state["total_trades"] = state.get("total_trades", 0) + 1
+                state["wins"] = state.get("wins", 0) + 1
+                
+                # 1. TP3 마감 알림 전송 (차트 버튼 포함)
+                send_telegram(
+                    f"🎉 *[골드 선물 SHORT - TP3 최종 익절 달성]*\n"
+                    f"━━━━━━━━━━━━━━━━━━━━━━\n"
+                    f"🪙 종목: `Gold Futures (GC=F)`\n"
+                    f"💰 최종 도달가: `{fmt_money(recent_low)}`\n"
+                    f"⏱️ 시간: `{ts()} (KST)`", 
+                    add_chart_btn=True
+                )
+                time.sleep(1)
+                # 2. 성적표 독립 메시지 전송
+                send_performance_report(state)
+                
                 state["position"] = None
             elif recent_high >= pos["sl"]:
-                send_telegram(f"🛡️ *[골드 선물 SHORT 손절(SL) 도달]*\n📉 도달가: `{fmt_money(recent_high)}`", add_chart_btn=True)
+                # 패배(LOSS) 카운트 증가
+                state["total_trades"] = state.get("total_trades", 0) + 1
+                state["losses"] = state.get("losses", 0) + 1
+                
+                # 1. SL 손절 알림 전송 (차트 버튼 포함)
+                send_telegram(
+                    f"🛡️ *[골드 선물 SHORT - 손절(SL) 도달]*\n"
+                    f"━━━━━━━━━━━━━━━━━━━━━━\n"
+                    f"🪙 종목: `Gold Futures (GC=F)`\n"
+                    f"📉 최종 도달가: `{fmt_money(recent_high)}`\n"
+                    f"⏱️ 시간: `{ts()} (KST)`", 
+                    add_chart_btn=True
+                )
+                time.sleep(1)
+                # 2. 성적표 독립 메시지 전송
+                send_performance_report(state)
+                
                 state["position"] = None
             elif recent_low <= pos["tp2"] and "TP2" not in pos.get("hit", []):
                 send_telegram(f"🎯 *[골드 선물 SHORT TP2 2차 익절 도달]*\n💰 도달가: `{fmt_money(recent_low)}`", add_chart_btn=True)
@@ -193,7 +291,15 @@ def process_gold_signal():
             elif not pos.get("tp1_hit", False) and recent_low <= pos["tp1"]:
                 pos["tp1_hit"] = True
                 pos["sl"] = pos["entry"]
-                send_telegram(f"🎯 *[골드 선물 SHORT TP1 도달 & 본전스탑 설정]*\n🛡️ 손절가가 진입가(`{fmt_money(pos['entry'])}`)로 수정되었습니다.", add_chart_btn=True)
+                send_telegram(
+                    f"🎯 *[골드 선물 SHORT - TP1 도달 & 본전스탑]*\n"
+                    f"━━━━━━━━━━━━━━━━━━━━━━\n"
+                    f"🪙 종목: `Gold Futures (GC=F)`\n"
+                    f"💰 도달가: `{fmt_money(recent_low)}`\n"
+                    f"🛡️ 조치: 손절가를 진입가(`{fmt_money(pos['entry'])}`)로 수정했습니다.\n"
+                    f"⏱️ 시간: `{ts()} (KST)`", 
+                    add_chart_btn=True
+                )
 
         save_state(state)
         return
@@ -227,7 +333,7 @@ def process_gold_signal():
             f"💰 진입가: `{fmt_money(price)}`\n"
             f"📊 RSI: `{rsi:.2f}` | ATR: `{atr:.2f}`\n\n"
             f"🎯 목표가 (Take Profit)\n"
-            f"  • 1차 (TP1): `{fmt_money(tp1)}` (본전스탑 전환)\n"
+            f"  • 1차 (TP1): `{fmt_money(tp1)}` (본전스탑)\n"
             f"  • 2차 (TP2): `{fmt_money(tp2)}`\n"
             f"  • 3차 (TP3): `{fmt_money(tp3)}`\n\n"
             f"🛡️ 손절가 (Stop Loss): `{fmt_money(sl)}`\n"
