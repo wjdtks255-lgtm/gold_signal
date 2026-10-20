@@ -19,7 +19,6 @@ BASE_DIR = Path.cwd()
 STATE_FILE = BASE_DIR / "signal_state.json"
 KST = timezone(timedelta(hours=9))
 
-VERSION = "20.6.0"
 SYMBOL = "GC=F"  # 금 선물 티커
 TV_URL = "https://www.tradingview.com/chart/?symbol=COMEX%3AGC1%21"
 
@@ -75,7 +74,7 @@ def save_state(state: Dict[str, Any]) -> None:
     except Exception as e:
         print(f"[{ts()}] State Save Error: {e}")
 
-# 독립된 성적표 메시지 생성 함수
+# 독립된 성적표 메시지 전송 함수
 def send_performance_report(state: Dict[str, Any]) -> None:
     total = state.get("total_trades", 0)
     wins = state.get("wins", 0)
@@ -90,7 +89,6 @@ def send_performance_report(state: Dict[str, Any]) -> None:
         f"  • Win Rate: **`{win_rate:.1f}%`**\n"
         f"⏱️ 시간: `{ts()} (KST)`"
     )
-    # 성적표는 차트 버튼 없이 텍스트 단독으로 전송
     send_telegram(report_text, add_chart_btn=False)
 
 # --------------------------------------------------------------------------- #
@@ -182,10 +180,11 @@ def process_gold_signal():
     rsi = float(latest['rsi']) if 'rsi' in latest and not np.isnan(latest['rsi']) else 50.0
     atr = float(latest['atr']) if 'atr' in latest and not np.isnan(latest['atr']) else price * 0.005
     
-    recent_high = float(df['high'].tail(3).max())
-    recent_low = float(df['low'].tail(3).min())
+    # yfinance 지연 대응: 최근 15분간의 최고가/최저가 스캔하여 TP/SL 도달 누락 방지
+    recent_high = float(df['high'].tail(15).max())
+    recent_low = float(df['low'].tail(15).min())
 
-    print(f"[{ts()}] Gold Price: {fmt_money(price)} (Min: {fmt_money(recent_low)} / Max: {fmt_money(recent_high)}) | RSI: {rsi:.2f}")
+    print(f"[{ts()}] Gold Price: {fmt_money(price)} (15m Min: {fmt_money(recent_low)} / 15m Max: {fmt_money(recent_high)}) | RSI: {rsi:.2f}")
 
     pos = state.get("position")
 
@@ -194,11 +193,10 @@ def process_gold_signal():
 
         if long:
             if recent_high >= pos["tp3"]:
-                # 승리(WIN) 카운트 증가
                 state["total_trades"] = state.get("total_trades", 0) + 1
                 state["wins"] = state.get("wins", 0) + 1
                 
-                # 1. TP3 마감 알림 전송 (차트 버튼 포함)
+                # 1. TP3 마감 알림 전송
                 send_telegram(
                     f"🎉 *[골드 선물 LONG - TP3 최종 익절 달성]*\n"
                     f"━━━━━━━━━━━━━━━━━━━━━━\n"
@@ -207,17 +205,16 @@ def process_gold_signal():
                     f"⏱️ 시간: `{ts()} (KST)`", 
                     add_chart_btn=True
                 )
-                time.sleep(1) # 메시지 순서 꼬임 방지
+                time.sleep(1.5)
                 # 2. 성적표 독립 메시지 전송
                 send_performance_report(state)
                 
                 state["position"] = None
             elif recent_low <= pos["sl"]:
-                # 패배(LOSS) 카운트 증가
                 state["total_trades"] = state.get("total_trades", 0) + 1
                 state["losses"] = state.get("losses", 0) + 1
                 
-                # 1. SL 손절 알림 전송 (차트 버튼 포함)
+                # 1. SL 손절 알림 전송
                 send_telegram(
                     f"🛡️ *[골드 선물 LONG - 손절(SL) 도달]*\n"
                     f"━━━━━━━━━━━━━━━━━━━━━━\n"
@@ -226,7 +223,7 @@ def process_gold_signal():
                     f"⏱️ 시간: `{ts()} (KST)`", 
                     add_chart_btn=True
                 )
-                time.sleep(1)
+                time.sleep(1.5)
                 # 2. 성적표 독립 메시지 전송
                 send_performance_report(state)
                 
@@ -248,11 +245,10 @@ def process_gold_signal():
                 )
         else:
             if recent_low <= pos["tp3"]:
-                # 승리(WIN) 카운트 증가
                 state["total_trades"] = state.get("total_trades", 0) + 1
                 state["wins"] = state.get("wins", 0) + 1
                 
-                # 1. TP3 마감 알림 전송 (차트 버튼 포함)
+                # 1. TP3 마감 알림 전송
                 send_telegram(
                     f"🎉 *[골드 선물 SHORT - TP3 최종 익절 달성]*\n"
                     f"━━━━━━━━━━━━━━━━━━━━━━\n"
@@ -261,17 +257,16 @@ def process_gold_signal():
                     f"⏱️ 시간: `{ts()} (KST)`", 
                     add_chart_btn=True
                 )
-                time.sleep(1)
+                time.sleep(1.5)
                 # 2. 성적표 독립 메시지 전송
                 send_performance_report(state)
                 
                 state["position"] = None
             elif recent_high >= pos["sl"]:
-                # 패배(LOSS) 카운트 증가
                 state["total_trades"] = state.get("total_trades", 0) + 1
                 state["losses"] = state.get("losses", 0) + 1
                 
-                # 1. SL 손절 알림 전송 (차트 버튼 포함)
+                # 1. SL 손절 알림 전송
                 send_telegram(
                     f"🛡️ *[골드 선물 SHORT - 손절(SL) 도달]*\n"
                     f"━━━━━━━━━━━━━━━━━━━━━━\n"
@@ -280,7 +275,7 @@ def process_gold_signal():
                     f"⏱️ 시간: `{ts()} (KST)`", 
                     add_chart_btn=True
                 )
-                time.sleep(1)
+                time.sleep(1.5)
                 # 2. 성적표 독립 메시지 전송
                 send_performance_report(state)
                 
@@ -326,7 +321,7 @@ def process_gold_signal():
             pos_text = "숏 (SHORT) 🔴"
 
         msg = (
-            f"🌟 *골드 선물 스마트 시그널 v{VERSION}* 🌟\n"
+            f"🌟 *골드 선물 스마트 시그널* 🌟\n"
             f"━━━━━━━━━━━━━━━━━━━━━━\n"
             f"🪙 종목: `Gold Futures (GC=F)`\n"
             f"📊 포지션: **{pos_text}**\n"
@@ -356,7 +351,7 @@ def process_gold_signal():
 
 def main():
     print(f"===================================")
-    print(f" GOLD FUTURES BOT v{VERSION} RUNNING")
+    print(f" GOLD FUTURES BOT RUNNING")
     print(f"===================================")
     process_gold_signal()
 
