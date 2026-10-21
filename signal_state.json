@@ -1,18 +1,9 @@
 {
   "last_signal_time": 0,
-  "total_trades": 5,
+  "total_trades": 6,
   "wins": 2,
-  "losses": 2,
+  "losses": 3,
   "breakevens": 1,
-  "position": {
-    "direction": "LONG",
-    "entry": 4151.89990234375,
-    "sl": 4139.89990234375,
-    "tp1": 4169.89990234375,
-    "tp2": 4187.89990234375,
-    "tp3": 4211.89990234375,
-    "tp1_hit": false,
-    "hit": []
-  },
-  "last_loss_time": 0
+  "position": null,
+  "last_loss_time": 1792609841.4395034
 }
