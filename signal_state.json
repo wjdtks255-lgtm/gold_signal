@@ -4,6 +4,15 @@
   "wins": 2,
   "losses": 3,
   "breakevens": 1,
-  "position": null,
+  "position": {
+    "direction": "LONG",
+    "entry": 4151.7998046875,
+    "sl": 4139.7998046875,
+    "tp1": 4169.7998046875,
+    "tp2": 4187.7998046875,
+    "tp3": 4211.7998046875,
+    "tp1_hit": false,
+    "hit": []
+  },
   "last_loss_time": 1792609841.4395034
 }
