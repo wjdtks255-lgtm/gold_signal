@@ -124,7 +124,7 @@ def send_telegram(text: str, add_chart_btn: bool = False) -> bool:
     return False
 
 # --------------------------------------------------------------------------- #
-#   3️⃣ 금 선물 데이터 수집 및 지표 계산 (yfinance 단독 활용)
+#   3️⃣ 금 선물 데이터 수집 및 지표 계산
 # --------------------------------------------------------------------------- #
 def fetch_gold_data(interval: str = "1m", period: str = "1d") -> pd.DataFrame:
     try:
@@ -156,22 +156,6 @@ def calculate_indicators(df: pd.DataFrame) -> pd.DataFrame:
     
     return df
 
-# yfinance 기반 1시간봉 상위 추세 분석
-def get_higher_timeframe_trend() -> str:
-    df_1h = fetch_gold_data(interval="1h", period="7d")
-    if df_1h.empty or len(df_1h) < 50:
-        return "NEUTRAL"
-    
-    ema50 = df_1h['close'].ewm(span=50, adjust=False).mean()
-    last_close = float(df_1h['close'].iloc[-1])
-    last_ema = float(ema50.iloc[-1])
-
-    if last_close > last_ema:
-        return "BULLISH"
-    elif last_close < last_ema:
-        return "BEARISH"
-    return "NEUTRAL"
-
 def fmt_money(v: Any) -> str:
     try:
         return f"${float(v):,.2f}"
@@ -179,7 +163,7 @@ def fmt_money(v: Any) -> str:
         return "$0.00"
 
 # --------------------------------------------------------------------------- #
-#   4️⃣ 포지션 감시 및 신규 시그널 포착 엔진
+#   4️⃣ 공격적 포지션 감시 및 신규 타점 포착 엔진
 # --------------------------------------------------------------------------- #
 def process_gold_signal():
     state = load_state()
@@ -193,16 +177,16 @@ def process_gold_signal():
     
     price = float(latest['close'])
     rsi = float(latest['rsi']) if 'rsi' in latest and not np.isnan(latest['rsi']) else 50.0
-    atr = float(latest['atr']) if 'atr' in latest and not np.isnan(latest['atr']) else price * 0.005
+    atr = float(latest['atr']) if 'atr' in latest and not np.isnan(latest['atr']) else price * 0.003
     
-    recent_high = float(df['high'].tail(15).max())
-    recent_low = float(df['low'].tail(15).min())
+    recent_high = float(df['high'].tail(10).max())
+    recent_low = float(df['low'].tail(10).min())
 
-    htf_trend = get_higher_timeframe_trend()
-    print(f"[{ts()}] Gold Price: {fmt_money(price)} | 1m RSI: {rsi:.2f} | 1H Trend: {htf_trend}")
+    print(f"[{ts()}] Gold Price: {fmt_money(price)} | 1m RSI: {rsi:.2f}")
 
     pos = state.get("position")
 
+    # 1. 포지션 보유 중인 경우: TP / SL 감시
     if pos:
         long = pos["direction"] == "LONG"
         hit_list = pos.setdefault("hit", [])
@@ -360,38 +344,36 @@ def process_gold_signal():
         save_state(state)
         return
 
-    # 신규 진입 스캔
-    current_hour = now().hour
-    is_active_session = (current_hour >= 15 or current_hour < 2)
-
+    # 2. 공격적인 신규 타점 스캔 (지정가/변곡점 공략 스타일)
     direction = None
-    if rsi <= 35 and htf_trend == "BULLISH" and is_active_session:
+    # 완화된 RSI 기준 및 최근 스윙 고점/저점 연동으로 타점 빈도 상향
+    if rsi <= 42:
         direction = "LONG"
-    elif rsi >= 65 and htf_trend == "BEARISH" and is_active_session:
+    elif rsi >= 58:
         direction = "SHORT"
 
     if direction:
-        risk = atr * 1.5
+        risk = atr * 1.0  # 짧고 타이트한 손절폭 설정 (고수익비 구조)
         if direction == "LONG":
             sl = price - risk
-            tp1 = price + risk * 1.2
-            tp2 = price + risk * 2.2
-            tp3 = price + risk * 3.5
+            tp1 = price + risk * 1.5
+            tp2 = price + risk * 2.8
+            tp3 = price + risk * 4.5
             pos_text = "롱 (LONG) 🟢"
         else:
             sl = price + risk
-            tp1 = price - risk * 1.2
-            tp2 = price - risk * 2.2
-            tp3 = price - risk * 3.5
+            tp1 = price - risk * 1.5
+            tp2 = price - risk * 2.8
+            tp3 = price - risk * 4.5
             pos_text = "숏 (SHORT) 🔴"
 
         msg = (
-            f"🌟 *골드 선물 고도화 스마트 시그널* 🌟\n"
+            f"⚡ *골드 선물 공격적 실전 타점* ⚡\n"
             f"━━━━━━━━━━━━━━━━━━━━━━\n"
             f"🪙 종목: `Gold Futures (GC=F)`\n"
             f"📊 포지션: **{pos_text}**\n"
             f"💰 진입가: `{fmt_money(price)}`\n"
-            f"📊 지표: `RSI {rsi:.2f}` | `1H 추세: {htf_trend}`\n\n"
+            f"📊 RSI: `{rsi:.2f}`\n\n"
             f"🎯 목표가 (Take Profit)\n"
             f"  • 1차 (TP1): `{fmt_money(tp1)}` (본전스탑)\n"
             f"  • 2차 (TP2): `{fmt_money(tp2)}`\n"
@@ -412,11 +394,11 @@ def process_gold_signal():
                 "hit": []
             }
             save_state(state)
-            print(f"[{ts()}] High-Quality Gold Signal Sent successfully.")
+            print(f"[{ts()}] Aggressive Gold Signal Sent successfully.")
 
 def main():
     print(f"===================================")
-    print(f" GOLD FUTURES ADVANCED BOT RUNNING")
+    print(f" GOLD FUTURES AGGRESSIVE BOT RUNNING")
     print(f"===================================")
     process_gold_signal()
 
