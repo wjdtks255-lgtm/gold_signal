@@ -2,6 +2,8 @@ name: 골드 선물 봇
 
 on:
   workflow_dispatch:
+  repository_dispatch:
+    types: [run_gold_bot]
   schedule:
     - cron: '*/5 * * * *'
 
