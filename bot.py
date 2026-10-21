@@ -167,7 +167,7 @@ def fmt_money(v: Any) -> str:
 # --------------------------------------------------------------------------- #
 def process_gold_signal():
     state = load_state()
-    df = fetch_gold_data(interval="15m", period="5d") # 15분봉 기준으로 변동성 확보
+    df = fetch_gold_data(interval="15m", period="5d")
     if df.empty:
         print(f"[{ts()}] Failed to fetch gold data.")
         return
@@ -179,7 +179,6 @@ def process_gold_signal():
     rsi = float(latest['rsi']) if 'rsi' in latest and not np.isnan(latest['rsi']) else 50.0
     atr = float(latest['atr']) if 'atr' in latest and not np.isnan(latest['atr']) else 15.0
     
-    # ATR이 너무 작을 경우 최소 보정값 적용 (금 선물 스케일에 맞춤)
     if atr < 5.0:
         atr = 12.0
 
@@ -187,12 +186,10 @@ def process_gold_signal():
 
     pos = state.get("position")
 
-    # 1. 포지션 보유 중인 경우: TP / SL 감시
     if pos:
         long = pos["direction"] == "LONG"
         hit_list = pos.setdefault("hit", [])
 
-        # 실시간 가격 확인을 위해 최신 1분봉 데이터 fetch
         df_1m = fetch_gold_data(interval="1m", period="1d")
         recent_high = float(df_1m['high'].tail(10).max()) if not df_1m.empty else price
         recent_low = float(df_1m['low'].tail(10).min()) if not df_1m.empty else price
@@ -336,4 +333,76 @@ def process_gold_signal():
                     send_telegram(
                         f"🛡️ *[골드 선물 SHORT - 손절(SL) 도달]*\n"
                         f"━━━━━━━━━━━━━━━━━━━━━━\n"
-                        f"🪙 종목:
+                        f"🪙 종목: `Gold Futures (GC=F)`\n"
+                        f"📉 최종 도달가: `{fmt_money(recent_high)}`\n"
+                        f"⏱️ 시간: `{ts()} (KST)`", add_chart_btn=True
+                    )
+                    time.sleep(1.5)
+                    send_performance_report(state)
+                
+                state["position"] = None
+                save_state(state)
+                return
+
+        save_state(state)
+        return
+
+    # 신규 타점 스캔
+    direction = None
+    if rsi <= 40:
+        direction = "LONG"
+    elif rsi >= 60:
+        direction = "SHORT"
+
+    if direction:
+        risk = max(atr * 0.8, 10.0) 
+        if direction == "LONG":
+            sl = price - risk
+            tp1 = price + risk * 1.5
+            tp2 = price + risk * 3.0
+            tp3 = price + risk * 5.0
+            pos_text = "롱 (LONG) 🟢"
+        else:
+            sl = price + risk
+            tp1 = price - risk * 1.5
+            tp2 = price - risk * 3.0
+            tp3 = price - risk * 5.0
+            pos_text = "숏 (SHORT) 🔴"
+
+        msg = (
+            f"⚡ *골드 선물 프로 실전 타점 (수익폭 보정)* ⚡\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"🪙 종목: `Gold Futures (GC=F)`\n"
+            f"📊 포지션: **{pos_text}**\n"
+            f"💰 진입가: `{fmt_money(price)}`\n"
+            f"📊 15m RSI: `{rsi:.2f}`\n\n"
+            f"🎯 목표가 (Take Profit)\n"
+            f"  • 1차 (TP1): `{fmt_money(tp1)}` (본전스탑)\n"
+            f"  • 2차 (TP2): `{fmt_money(tp2)}`\n"
+            f"  • 3차 (TP3): `{fmt_money(tp3)}`\n\n"
+            f"🛡️ 손절가 (Stop Loss): `{fmt_money(sl)}`\n"
+            f"⏱️ 시간: `{ts()} (KST)`"
+        )
+
+        if send_telegram(msg, add_chart_btn=True):
+            state["position"] = {
+                "direction": direction,
+                "entry": price,
+                "sl": sl,
+                "tp1": tp1,
+                "tp2": tp2,
+                "tp3": tp3,
+                "tp1_hit": False,
+                "hit": []
+            }
+            save_state(state)
+            print(f"[{ts()}] Scaled Gold Signal Sent successfully.")
+
+def main():
+    print(f"===================================")
+    print(f" GOLD FUTURES SCALED BOT RUNNING")
+    print(f"===================================")
+    process_gold_signal()
+
+if __name__ == "__main__":
+    main()
