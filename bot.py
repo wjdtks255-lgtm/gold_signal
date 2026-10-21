@@ -10,7 +10,7 @@ import pandas as pd
 import numpy as np
 
 # --------------------------------------------------------------------------- #
-#   1️⃣ 기본 설정 및 상수 (금 선물 전용)
+#   1️⃣ 기본 설정 및 상수
 # --------------------------------------------------------------------------- #
 TOKEN = os.getenv("TELEGRAM_TOKEN", "").strip()
 CHAT_ID = (os.getenv("TELEGRAM_CHAT_ID") or os.getenv("CHAT_ID") or "").strip()
@@ -19,7 +19,7 @@ BASE_DIR = Path.cwd()
 STATE_FILE = BASE_DIR / "signal_state.json"
 KST = timezone(timedelta(hours=9))
 
-SYMBOL = "GC=F"  # 금 선물 티커
+SYMBOL = "GC=F"
 TV_URL = "https://www.tradingview.com/chart/?symbol=COMEX%3AGC1%21"
 
 # --------------------------------------------------------------------------- #
@@ -46,7 +46,7 @@ def ts() -> str:
 def load_state() -> Dict[str, Any]:
     default_state = {
         "position": None,
-        "last_signal_time": 0,
+        "last_loss_time": 0,  # 손절 발생 시간 기록 (쿨타임용)
         "total_trades": 0,
         "wins": 0,
         "breakevens": 0,
@@ -136,20 +136,18 @@ def fetch_gold_data(interval: str = "15m", period: str = "5d") -> pd.DataFrame:
         return pd.DataFrame()
 
 def calculate_indicators(df: pd.DataFrame) -> pd.DataFrame:
-    if df.empty or len(df) < 20:
+    if df.empty or len(df) < 50:
         return df
     
-    delta = df['close'].diff()
-    gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
-    loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
-    rs = gain / (loss + 1e-9)
-    df['rsi'] = 100 - (100 / (1 + rs))
-    
+    # ATR (변동성 기반 손절/익절폭)
     high_low = df['high'] - df['low']
     high_close = np.abs(df['high'] - df['close'].shift())
     low_close = np.abs(df['low'] - df['close'].shift())
     tr = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
     df['atr'] = tr.rolling(window=14).mean()
+    
+    # 추세 필터용 50 EMA
+    df['ema50'] = df['close'].ewm(span=50, adjust=False).mean()
     
     return df
 
@@ -160,60 +158,57 @@ def fmt_money(v: Any) -> str:
         return "$0.00"
 
 # --------------------------------------------------------------------------- #
-#   3️⃣ 4대 전략 분석 엔진
+#   3️⃣ 엄격해진 3대 핵심 전략 분석 엔진 (단순 RSI 완전 제거)
 # --------------------------------------------------------------------------- #
-def analyze_top_trader_strategies(df: pd.DataFrame) -> tuple:
-    if df.empty or len(df) < 20:
+def analyze_strict_strategies(df: pd.DataFrame) -> tuple:
+    if df.empty or len(df) < 50:
         return None, ""
 
     latest = df.iloc[-1]
     prev = df.iloc[-2]
     price = float(latest['close'])
+    ema50 = float(latest['ema50'])
     
-    # 1. 유동성 스윕
+    # 1. 유동성 스윕 (Liquidity Sweep)
     recent_high = df['high'].iloc[-15:-1].max()
     recent_low = df['low'].iloc[-15:-1].min()
     
     if prev['high'] > recent_high and price < recent_high:
-        return "SHORT", "유동성 스윕"
+        if price < ema50: # 추세 필터: EMA 밑에 있을 때만 숏
+            return "SHORT", "유동성 스윕"
     if prev['low'] < recent_low and price > recent_low:
-        return "LONG", "유동성 스윕"
+        if price > ema50: # 추세 필터: EMA 위에 있을 때만 롱
+            return "LONG", "유동성 스윕"
 
-    # 2. 오더블록 / 매물대
+    # 2. 스마트머니 오더블록 (Order Block)
     body_size = abs(latest['close'] - latest['open'])
     avg_body = (abs(df['close'] - df['open'])).rolling(10).mean().iloc[-1]
     
-    if body_size > avg_body * 1.5:
-        if latest['close'] > latest['open']:
+    if body_size > avg_body * 1.8: # 기준 강화
+        if latest['close'] > latest['open'] and price > ema50:
             return "LONG", "스마트머니 오더블록"
-        else:
+        elif latest['close'] < latest['open'] and price < ema50:
             return "SHORT", "스마트머니 오더블록"
 
-    # 3. 라운드 넘버
+    # 3. 라운드 넘버 반등/거부 (Round Number)
     remainder = price % 50
-    if remainder < 3 or remainder > 47:
-        if latest['close'] > prev['close']:
+    if remainder < 2 or remainder > 48:
+        if latest['close'] > prev['close'] and price > ema50:
             return "LONG", "라운드 넘버"
-        else:
+        elif latest['close'] < prev['close'] and price < ema50:
             return "SHORT", "라운드 넘버"
-
-    # 4. 모멘텀
-    rsi = float(latest['rsi']) if not np.isnan(latest['rsi']) else 50.0
-    if rsi < 38:
-        return "LONG", "모멘텀 반전"
-    elif rsi > 62:
-        return "SHORT", "모멘텀 반전"
 
     return None, ""
 
 # --------------------------------------------------------------------------- #
-#   4️⃣ 메인 프로세스 (포지션 락 + 심플 알림)
+#   4️⃣ 메인 프로세스 (포지션 락 + 1시간 손절 쿨타임 적용)
 # --------------------------------------------------------------------------- #
 def process_gold_signal():
     state = load_state()
     pos = state.get("position")
+    current_time = time.time()
 
-    # 🚨 포지션 락: 포지션 보유 중엔 스캔 차단
+    # 🚨 1. 포지션 락: 기존 포지션 관리
     if pos:
         print(f"[{ts()}] [POSITION LOCK] 기존 포지션 관리 중.")
         
@@ -288,12 +283,14 @@ def process_gold_signal():
                 else:
                     state["total_trades"] = state.get("total_trades", 0) + 1
                     state["losses"] = state.get("losses", 0) + 1
+                    state["last_loss_time"] = current_time # 손절 쿨타임 시각 기록
                     loss_amt = abs(pos["entry"] - pos["sl"])
                     send_telegram(
                         f"🔴 *[골드 선물 LONG - 손절 마감]*\n"
                         f"━━━━━━━━━━━━━━━━━━━━━━\n"
                         f"🪙 종목: `Gold Futures (GC=F)`\n"
                         f"📉 청산가: `{fmt_money(recent_low)}` (-{fmt_money(loss_amt)})\n"
+                        f"⏳ 조치: 추세 안정을 위해 1시간 동안 신규 스캔을 중단합니다.\n"
                         f"⏱️ `{ts()} (KST)`", add_chart_btn=True
                     )
                     send_performance_report(state)
@@ -302,7 +299,7 @@ def process_gold_signal():
                 save_state(state)
                 return
 
-        else: # SHORT 포지션 관리
+        else: # SHORT 관리
             if "TP1" not in hit_list and recent_low <= pos["tp1"]:
                 hit_list.append("TP1")
                 pos["tp1_hit"] = True
@@ -362,12 +359,14 @@ def process_gold_signal():
                 else:
                     state["total_trades"] = state.get("total_trades", 0) + 1
                     state["losses"] = state.get("losses", 0) + 1
+                    state["last_loss_time"] = current_time # 손절 쿨타임 시각 기록
                     loss_amt = abs(pos["sl"] - pos["entry"])
                     send_telegram(
                         f"🔴 *[골드 선물 SHORT - 손절 마감]*\n"
                         f"━━━━━━━━━━━━━━━━━━━━━━\n"
                         f"🪙 종목: `Gold Futures (GC=F)`\n"
                         f"📉 청산가: `{fmt_money(recent_high)}` (-{fmt_money(loss_amt)})\n"
+                        f"⏳ 조치: 추세 안정을 위해 1시간 동안 신규 스캔을 중단합니다.\n"
                         f"⏱️ `{ts()} (KST)`", add_chart_btn=True
                     )
                     send_performance_report(state)
@@ -377,6 +376,13 @@ def process_gold_signal():
                 return
 
         save_state(state)
+        return
+
+    # 🚨 2. 손절 후 1시간 쿨타임 검사
+    last_loss = state.get("last_loss_time", 0)
+    if current_time - last_loss < 3600: # 3600초 = 1시간
+        remaining_min = int((3600 - (current_time - last_loss)) // 60)
+        print(f"[{ts()}] [COOL-DOWN ACTIVE] 최근 손절 발생. 잔여 쿨타임: {remaining_min}분")
         return
 
     # ----------------신규 타점 스캔---------------- #
@@ -391,7 +397,7 @@ def process_gold_signal():
     if atr < 8.0:
         atr = 12.0
 
-    direction, strategy_name = analyze_top_trader_strategies(df)
+    direction, strategy_name = analyze_strict_strategies(df)
     print(f"[{ts()}] Gold Price: {fmt_money(price)} | Strategy: {direction} ({strategy_name})")
 
     if direction:
@@ -442,11 +448,11 @@ def process_gold_signal():
                 "hit": []
             }
             save_state(state)
-            print(f"[{ts()}] Signal Sent successfully.")
+            print(f"[{ts()}] Strict Signal Sent successfully.")
 
 def main():
     print(f"===================================")
-    print(f" GOLD FUTURES SIGNAL BOT RUNNING")
+    print(f" GOLD FUTURES STRICT BOT RUNNING")
     print(f"===================================")
     process_gold_signal()
 
