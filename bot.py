@@ -23,7 +23,7 @@ SYMBOL = "GC=F"  # 금 선물 티커
 TV_URL = "https://www.tradingview.com/chart/?symbol=COMEX%3AGC1%21"
 
 # --------------------------------------------------------------------------- #
-#   2️⃣ 유틸리티 및 안전한 파일 I/O (3분할 통계 필드 포함)
+#   2️⃣ 유틸리티 및 안전한 파일 I/O (통계 집계 체계)
 # --------------------------------------------------------------------------- #
 class NpEncoder(json.JSONEncoder):
     def default(self, obj: Any) -> Any:
@@ -49,7 +49,7 @@ def load_state() -> Dict[str, Any]:
         "last_signal_time": 0,
         "total_trades": 0,  # 총 거래 횟수
         "wins": 0,          # 익절 성공 (TP3 달성)
-        "breakevens": 0,    # 본전 마감 (TP1 도달 후 진입가 방어)
+        "breakevens": 0,    # 본전 방어 (TP1 도달 후 진입가 방어 성공)
         "losses": 0         # 일반 손절 (초기 SL 이탈)
     }
     if not STATE_FILE.exists():
@@ -75,21 +75,23 @@ def save_state(state: Dict[str, Any]) -> None:
     except Exception as e:
         print(f"[{ts()}] State Save Error: {e}")
 
-# 독립된 3분할 성적표 메시지 전송 함수
+# 본전 방어(Breakeven)를 성공 거래로 포함하여 산정하는 성적표 전송 함수
 def send_performance_report(state: Dict[str, Any]) -> None:
     total = state.get("total_trades", 0)
     wins = state.get("wins", 0)
     breakevens = state.get("breakevens", 0)
     losses = state.get("losses", 0)
     
-    win_rate = (wins / total * 100) if total > 0 else 0.0
+    # TP3 익절 + TP1 달성 후 본전 방어 건을 모두 성공(Successful Trades)으로 집계
+    successful_trades = wins + breakevens
+    success_rate = (successful_trades / total * 100) if total > 0 else 0.0
     
     report_text = (
         f"📊 *[Trading Performance Report]*\n"
         f"━━━━━━━━━━━━━━━━━━━━━━\n"
         f"  • Total Trades: `{total}회`\n"
-        f"  • 승 / 본전 / 패: `{wins}승 {breakevens}무 {losses}패`\n"
-        f"  • Win Rate: **`{win_rate:.1f}%`**\n"
+        f"  • 상세 내역: `{wins}승(TP3) / {breakevens}본전방어 / {losses}패`\n"
+        f"  • 실효 성공률 (방어 포함): **`{success_rate:.1f}%`**\n"
         f"⏱️ 시간: `{ts()} (KST)`"
     )
     send_telegram(report_text, add_chart_btn=False)
@@ -128,7 +130,7 @@ def send_telegram(text: str, add_chart_btn: bool = False) -> bool:
     return False
 
 # --------------------------------------------------------------------------- #
-#   4️⃣ 금 선물 데이터 수집 (1분봉 기준)
+#   4️⃣ 금 선물 데이터 수집 및 지표 계산
 # --------------------------------------------------------------------------- #
 def fetch_gold_data() -> pd.DataFrame:
     try:
@@ -253,7 +255,7 @@ def process_gold_signal():
                     state["breakevens"] = state.get("breakevens", 0) + 1
                     
                     send_telegram(
-                        f"🛡️ *[골드 선물 LONG - 본전 마감 (Breakeven)]*\n"
+                        f"🛡️ *[골드 선물 LONG - 본전 마감 (Breakeven 방어 성공)]*\n"
                         f"━━━━━━━━━━━━━━━━━━━━━━\n"
                         f"🪙 종목: `Gold Futures (GC=F)`\n"
                         f"💰 도달가 (진입가 방어): `{fmt_money(recent_low)}`\n"
@@ -340,7 +342,7 @@ def process_gold_signal():
                     state["breakevens"] = state.get("breakevens", 0) + 1
                     
                     send_telegram(
-                        f"🛡️ *[골드 선물 SHORT - 본전 마감 (Breakeven)]*\n"
+                        f"🛡️ *[골드 선물 SHORT - 본전 마감 (Breakeven 방어 성공)]*\n"
                         f"━━━━━━━━━━━━━━━━━━━━━━\n"
                         f"🪙 종목: `Gold Futures (GC=F)`\n"
                         f"💰 도달가 (진입가 방어): `{fmt_money(recent_high)}`\n"
@@ -402,7 +404,7 @@ def process_gold_signal():
             f"📊 RSI: `{rsi:.2f}` | ATR: `{atr:.2f}`\n\n"
             f"🎯 목표가 (Take Profit)\n"
             f"  • 1차 (TP1): `{fmt_money(tp1)}` (본전스탑)\n"
-            f"  • 2차 (TP2): `{fmt_money(tp2)}`\n"
+            f"  • 2차 (TP2): `{fmt_money`
             f"  • 3차 (TP3): `{fmt_money(tp3)}`\n\n"
             f"🛡️ 손절가 (Stop Loss): `{fmt_money(sl)}`\n"
             f"⏱️ 시간: `{ts()} (KST)`"
@@ -421,6 +423,12 @@ def process_gold_signal():
             }
             save_state(state)
             print(f"[{ts()}] Gold Signal Sent successfully.")
+
+def main():
+    print(f"===================================")
+    print(f" GOLD FUTURES BOT RUNNING")
+    print(f"===================================")
+    process_gold_signal()
 
 def main():
     print(f"===================================")
