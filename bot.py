@@ -1,457 +1,448 @@
-from datetime import datetime, timedelta, timezone
-import json
-import os
-import time
-from pathlib import Path
-from typing import Any, Dict, List
-import requests
-import yfinance as yf
+# KOREA STOCK HUNTER SCREENER & SIGNAL BOT (PROFIT WIN STATS MASTER V30.0)
+import os, json, time, requests
+from datetime import datetime, timezone, timedelta
 import pandas as pd
 import numpy as np
+import FinanceDataReader as fdr
 
-# --------------------------------------------------------------------------- #
-#   1️⃣ 기본 설정 및 상수 (금 선물 전용)
-# --------------------------------------------------------------------------- #
-TOKEN = os.getenv("TELEGRAM_TOKEN", "").strip()
-CHAT_ID = (os.getenv("TELEGRAM_CHAT_ID") or os.getenv("CHAT_ID") or "").strip()
-
-BASE_DIR = Path.cwd()
-STATE_FILE = BASE_DIR / "signal_state.json"
+V = "30.0.0"
+STATE = "active_positions.json"
+TOKEN = os.getenv("TELEGRAM_TOKEN", "")
+CHAT = os.getenv("TELEGRAM_CHAT_ID", "")
 KST = timezone(timedelta(hours=9))
 
-SYMBOL = "GC=F"  # 금 선물 티커
-TV_URL = "https://www.tradingview.com/chart/?symbol=COMEX%3AGC1%21"
+MAX_SLOTS = 15  # 슬롯 유지
 
-# --------------------------------------------------------------------------- #
-#   2️⃣ 유틸리티 및 안전한 파일 I/O (통계 집계 체계)
-# --------------------------------------------------------------------------- #
 class NpEncoder(json.JSONEncoder):
-    def default(self, obj: Any) -> Any:
-        if isinstance(obj, (np.integer, np.int64)):
-            return int(obj)
-        if isinstance(obj, (np.floating, np.float64)):
-            return float(obj)
-        if isinstance(obj, np.ndarray):
-            return obj.tolist()
-        if isinstance(obj, (np.bool_, bool)):
-            return bool(obj)
-        return super().default(obj)
+    def default(self, obj):
+        if isinstance(obj, np.integer): return int(obj)
+        if isinstance(obj, np.floating): return float(obj)
+        if isinstance(obj, np.ndarray): return obj.tolist()
+        if isinstance(obj, (np.bool_, bool)): return bool(obj)
+        return super(NpEncoder, self).default(obj)
 
-def now() -> datetime:
+def now():
     return datetime.now(KST)
 
-def ts() -> str:
+def ts():
     return now().strftime("%Y-%m-%d %H:%M:%S")
 
-def load_state() -> Dict[str, Any]:
+def m(x):
+    try:
+        val = float(x)
+        if np.isnan(val) or np.isinf(val): return "0원"
+        return f"{int(val):,}원"
+    except:
+        return "0원"
+
+def save(p, x):
+    q = p + ".tmp"
+    with open(q, "w", encoding="utf8") as f:
+        json.dump(x, f, ensure_ascii=False, indent=2, cls=NpEncoder)
+    os.replace(q, p)
+
+def load(p, d):
+    try:
+        with open(p, encoding="utf8") as f: return json.load(f)
+    except: return d
+
+def tg(x):
+    if not TOKEN or not CHAT: 
+        print("[TG CONFIG ERROR] Token or Chat ID is missing.")
+        return False
+    try:
+        r = requests.post(
+            f"https://api.telegram.org/bot{TOKEN}/sendMessage",
+            data={"chat_id": CHAT, "text": x, "parse_mode": "HTML", "disable_web_page_preview": True},
+            timeout=15)
+        print("[TELEGRAM]", "SENT" if r.ok else f"FAIL: {r.text}")
+        return r.ok
+    except Exception as e:
+        print("[TG ERROR]", e)
+        return False
+
+def get_state():
+    current_month = now().strftime("%Y-%m")
+    default_stats = {"wins": 0, "draws": 0, "losses": 0}
     default_state = {
-        "position": None,
-        "last_signal_time": 0,
-        "total_trades": 0,  # 총 거래 횟수
-        "wins": 0,          # 익절 성공 (TP3 달성)
-        "breakevens": 0,    # 본전 방어 (TP1 도달 후 진입가 방어 성공)
-        "losses": 0         # 일반 손절 (초기 SL 이탈)
+        "positions": [], 
+        "sent": [], 
+        "total_stats": dict(default_stats),
+        "monthly_stats": {"month": current_month, **default_stats}
     }
-    if not STATE_FILE.exists():
-        return default_state
-    try:
-        with STATE_FILE.open("r", encoding="utf-8") as f:
-            data = json.load(f)
-            if not isinstance(data, dict):
-                return default_state
-            for k, v in default_state.items():
-                data.setdefault(k, v)
-            return data
-    except Exception as e:
-        print(f"[{ts()}] State Load Error: {e}")
-        return default_state
-
-def save_state(state: Dict[str, Any]) -> None:
-    tmp_file = STATE_FILE.with_suffix(STATE_FILE.suffix + ".tmp")
-    try:
-        with tmp_file.open("w", encoding="utf-8") as f:
-            json.dump(state, f, ensure_ascii=False, indent=2, cls=NpEncoder)
-        tmp_file.replace(STATE_FILE)
-    except Exception as e:
-        print(f"[{ts()}] State Save Error: {e}")
-
-# 본전 방어(Breakeven)를 성공 거래로 포함하여 산정하는 성적표 전송 함수
-def send_performance_report(state: Dict[str, Any]) -> None:
-    total = state.get("total_trades", 0)
-    wins = state.get("wins", 0)
-    breakevens = state.get("breakevens", 0)
-    losses = state.get("losses", 0)
+    s = load(STATE, default_state)
+    if not isinstance(s, dict):
+        s = default_state
+    s.setdefault("positions", [])
+    s.setdefault("sent", [])
+    s.setdefault("total_stats", dict(default_stats))
+    s["total_stats"].setdefault("draws", 0)
     
-    successful_trades = wins + breakevens
-    success_rate = (successful_trades / total * 100) if total > 0 else 0.0
-    
-    report_text = (
-        f"📊 *[Trading Performance Report]*\n"
-        f"━━━━━━━━━━━━━━━━━━━━━━\n"
-        f"  • Total Trades: `{total}회`\n"
-        f"  • 상세 내역: `{wins}승(TP3) / {breakevens}본전방어 / {losses}패`\n"
-        f"  • 실효 성공률 (방어 포함): **`{success_rate:.1f}%`**\n"
-        f"⏱️ 시간: `{ts()} (KST)`"
-    )
-    send_telegram(report_text, add_chart_btn=False)
+    monthly = s.get("monthly_stats", {"month": current_month, **default_stats})
+    if monthly.get("month") != current_month:
+        s["monthly_stats"] = {"month": current_month, **default_stats}
+    else:
+        s["monthly_stats"].setdefault("draws", 0)
+        
+    return s
 
-# --------------------------------------------------------------------------- #
-#   3️⃣ 텔레그램 알림 시스템
-# --------------------------------------------------------------------------- #
-def send_telegram(text: str, add_chart_btn: bool = False) -> bool:
-    if not TOKEN or not CHAT_ID:
-        print(f"[{ts()}] TG CONFIG ERROR: Token or Chat ID missing.")
+def calculate_atr(df, period=14):
+    high = df['High']
+    low = df['Low']
+    close = df['Close']
+    tr1 = high - low
+    tr2 = abs(high - close.shift())
+    tr3 = abs(low - close.shift())
+    tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
+    atr = tr.rolling(period).mean()
+    return atr
+
+def is_market_open():
+    """국장 개장 시간 체크 (평일 오전 9:00 ~ 오후 3:30)"""
+    n = now()
+    if n.weekday() >= 5: # 주말 제외
         return False
     
-    url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
-    payload = {
-        "chat_id": CHAT_ID,
-        "text": text,
-        "parse_mode": "Markdown",
-        "disable_web_page_preview": True,
-    }
+    current_time_minutes = n.hour * 60 + n.minute
+    market_start = 9 * 60       # 09:00
+    market_end = 15 * 60 + 30   # 15:30
     
-    if add_chart_btn:
-        payload["reply_markup"] = {
-            "inline_keyboard": [
-                [{"text": "📈 트레이딩뷰 골드 차트 바로가기", "url": TV_URL}]
-            ]
-        }
+    return market_start <= current_time_minutes <= market_end
 
-    for attempt in range(3):
-        try:
-            res = requests.post(url, json=payload, timeout=10)
-            if res.status_code == 200:
-                return True
-        except Exception as e:
-            print(f"[{ts()}] TG Exception (try {attempt+1}): {e}")
-        time.sleep(1)
-    return False
-
-# --------------------------------------------------------------------------- #
-#   4️⃣ 금 선물 데이터 수집 및 멀티 타임프레임(MTF) 지표 계산
-# --------------------------------------------------------------------------- #
-def fetch_gold_data(interval: str = "1m", period: str = "1d") -> pd.DataFrame:
+def check_market_trend_and_leaders():
+    """코스피/코스닥 시장 흐름 변화 감지 및 급락 경보, 주도주 분석 리포트 전송"""
     try:
-        ticker = yf.Ticker(SYMBOL)
-        df = ticker.history(period=period, interval=interval)
-        if df.empty:
-            return pd.DataFrame()
-        df.columns = [c.lower() for c in df.columns]
-        return df
+        kospi_df = fdr.DataReader('KS11', datetime.now() - timedelta(days=5))
+        kosdaq_df = fdr.DataReader('KQ11', datetime.now() - timedelta(days=5))
+        
+        kospi_close = float(kospi_df['Close'].iloc[-1])
+        kospi_prev = float(kospi_df['Close'].iloc[-2])
+        kospi_chg = ((kospi_close - kospi_prev) / kospi_prev) * 100
+
+        kosdaq_close = float(kosdaq_df['Close'].iloc[-1])
+        kosdaq_prev = float(kosdaq_df['Close'].iloc[-2])
+        kosdaq_chg = ((kosdaq_close - kosdaq_prev) / kosdaq_prev) * 100
+
+        if kospi_chg <= -2.0 or kosdaq_chg <= -2.0:
+            tg(f"""🚨 <b>[긴급 시장 변동성 경보]</b> 🚨
+━━━━━━━━━━━━━━━━━━━━━━━
+⚠️ 시장 지수가 급락세를 보이고 있습니다!
+• 코스피 등락: <code>{kospi_chg:+.2f}%</code>
+• 코스닥 등락: <code>{kosdaq_chg:+.2f}%</code>
+💡 <i>신규 매수를 일시 중단하고 리스크 관리에 집중하세요!</i>
+━━━━━━━━━━━━━━━━━━━━━━━""")
+
+        krx = fdr.StockListing('KRX')
+        top_stocks = krx.dropna(subset=['Code', 'Name']).head(40)
+        
+        leader_candidates = []
+        for _, row in top_stocks.head(10).iterrows():
+            code = str(row['Code'])
+            name = str(row['Name'])
+            try:
+                df = fdr.DataReader(code)
+                if len(df) >= 2:
+                    chg = ((df['Close'].iloc[-1] - df['Close'].iloc[-2]) / df['Close'].iloc[-2]) * 100
+                    val = df['Volume'].iloc[-1] * df['Close'].iloc[-1]
+                    leader_candidates.append({"name": name, "chg": chg, "val": val})
+            except:
+                continue
+        
+        leader_candidates = sorted(leader_candidates, key=lambda x: x['val'], reverse=True)[:3]
+        leaders_str = "\n".join([f"• <b>{item['name']}</b> (등락: <code>{item['chg']:+.2f}%</code>)" for item in leader_candidates])
+
+        market_report = f"""📊 <b>[국장 고승률 시장 동향 리포트]</b>
+━━━━━━━━━━━━━━━━━━━━━━━
+🇰🇷 <b>코스피:</b> <code>{kospi_close:,.2f}</code> ({kospi_chg:+.2f}%)
+🇰🇷 <b>코스닥:</b> <code>{kosdaq_close:,.2f}</code> ({kosdaq_chg:+.2f}%)
+
+🔥 <b>오늘의 시장 주도 섹터 및 종목:</b>
+{leaders_str}
+━━━━━━━━━━━━━━━━━━━━━━━
+📈 <i>승률 70% 타겟 리스크 관리 모드가 활성화되었습니다.</i>"""
+        
+        tg(market_report)
     except Exception as e:
-        print(f"[{ts()}] Data Fetch Error ({interval}): {e}")
-        return pd.DataFrame()
+        print("[MARKET TREND ERROR]", e)
 
-def calculate_indicators(df: pd.DataFrame) -> pd.DataFrame:
-    if df.empty or len(df) < 20:
-        return df
-    
-    delta = df['close'].diff()
-    gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
-    loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
-    rs = gain / (loss + 1e-9)
-    df['rsi'] = 100 - (100 / (1 + rs))
-    
-    high_low = df['high'] - df['low']
-    high_close = np.abs(df['high'] - df['close'].shift())
-    low_close = np.abs(df['low'] - df['close'].shift())
-    tr = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
-    df['atr'] = tr.rolling(window=14).mean()
-    
-    return df
+def get_stats_string(total_stats, monthly_stats):
+    """실제 수익 거래(TP1/TP2/TP3)가 승리로 포함된 전적 리포트 생성"""
+    def format_single(s_dict, title):
+        w = s_dict.get("wins", 0)
+        d = s_dict.get("draws", 0)
+        l = s_dict.get("losses", 0)
+        total = w + d + l
+        win_rate = (w / total * 100) if total > 0 else 0.0
+        defense_rate = ((w + d) / total * 100) if total > 0 else 0.0
+        return f"• <b>{title}:</b> 총 {total}전 {w}승 {d}무 {l}패 (승률: <b>{win_rate:.1f}%</b> | 방어율: <b>{defense_rate:.1f}%</b>)"
 
-# 상위 타임프레임(1시간봉) 대세 추세 분석 (EMA 50 기준)
-def get_higher_timeframe_trend() -> str:
-    df_1h = fetch_gold_data(interval="1h", period="7d")
-    if df_1h.empty or len(df_1h) < 50:
-        return "NEUTRAL"
-    
-    ema50 = df_1h['close'].ewm(span=50, adjust=False).mean()
-    last_close = float(df_1h['close'].iloc[-1])
-    last_ema = float(ema50.iloc[-1])
+    t_str = format_single(total_stats, "전체 누적")
+    m_label = monthly_stats.get("month", "이번 달")
+    m_str = format_single(monthly_stats, f"{m_label} 전적")
 
-    if last_close > last_ema:
-        return "BULLISH"
-    elif last_close < last_ema:
-        return "BEARISH"
-    return "NEUTRAL"
-
-def fmt_money(v: Any) -> str:
-    try:
-        return f"${float(v):,.2f}"
-    except Exception:
-        return "$0.00"
-
-# --------------------------------------------------------------------------- #
-#   5️⃣ 포지션 감시 및 신규 시그널 포착 엔진
-# --------------------------------------------------------------------------- #
-def process_gold_signal():
-    state = load_state()
-    df = fetch_gold_data(interval="1m", period="1d")
-    if df.empty:
-        print(f"[{ts()}] Failed to fetch gold data.")
-        return
-
-    df = calculate_indicators(df)
-    latest = df.iloc[-1]
-    
-    price = float(latest['close'])
-    rsi = float(latest['rsi']) if 'rsi' in latest and not np.isnan(latest['rsi']) else 50.0
-    atr = float(latest['atr']) if 'atr' in latest and not np.isnan(latest['atr']) else price * 0.005
-    
-    recent_high = float(df['high'].tail(15).max())
-    recent_low = float(df['low'].tail(15).min())
-
-    htf_trend = get_higher_timeframe_trend()
-    print(f"[{ts()}] Gold Price: {fmt_money(price)} | 1m RSI: {rsi:.2f} | 1H Trend: {htf_trend}")
-
-    pos = state.get("position")
-
-    # 1. 포지션 보유 중인 경우: TP / SL 감시
-    if pos:
-        long = pos["direction"] == "LONG"
-        hit_list = pos.setdefault("hit", [])
-
-        if long:
-            # TP1 도달
-            if "TP1" not in hit_list and recent_high >= pos["tp1"]:
-                hit_list.append("TP1")
-                pos["tp1_hit"] = True
-                pos["sl"] = pos["entry"]
-                send_telegram(
-                    f"🎯 *[골드 선물 LONG - TP1 도달 & 본전스탑]*\n"
-                    f"━━━━━━━━━━━━━━━━━━━━━━\n"
-                    f"🪙 종목: `Gold Futures (GC=F)`\n"
-                    f"💰 도달가: `{fmt_money(recent_high)}`\n"
-                    f"🛡️ 조치: 손절가를 진입가(`{fmt_money(pos['entry'])}`)로 수정했습니다.\n"
-                    f"⏱️ 시간: `{ts()} (KST)`", 
-                    add_chart_btn=True
-                )
-                save_state(state)
-                time.sleep(1)
-
-            # TP2 도달
-            if "TP2" not in hit_list and recent_high >= pos["tp2"]:
-                hit_list.append("TP2")
-                send_telegram(
-                    f"🎯 *[골드 선물 LONG TP2 2차 익절 도달]*\n"
-                    f"━━━━━━━━━━━━━━━━━━━━━━\n"
-                    f"🪙 종목: `Gold Futures (GC=F)`\n"
-                    f"💰 도달가: `{fmt_money(recent_high)}`\n"
-                    f"⏱️ 시간: `{ts()} (KST)`", 
-                    add_chart_btn=True
-                )
-                save_state(state)
-                time.sleep(1)
-
-            # TP3 최종 익절
-            if "TP3" not in hit_list and recent_high >= pos["tp3"]:
-                hit_list.append("TP3")
-                state["total_trades"] = state.get("total_trades", 0) + 1
-                state["wins"] = state.get("wins", 0) + 1
-                
-                send_telegram(
-                    f"🎉 *[골드 선물 LONG - TP3 최종 익절 달성]*\n"
-                    f"━━━━━━━━━━━━━━━━━━━━━━\n"
-                    f"🪙 종목: `Gold Futures (GC=F)`\n"
-                    f"💰 최종 도달가: `{fmt_money(recent_high)}`\n"
-                    f"⏱️ 시간: `{ts()} (KST)`", 
-                    add_chart_btn=True
-                )
-                time.sleep(1.5)
-                send_performance_report(state)
-                state["position"] = None
-                save_state(state)
-                return
-
-            # SL 청산 (손절 / 본전 방어)
-            if recent_low <= pos["sl"]:
-                if pos.get("tp1_hit", False):
-                    state["total_trades"] = state.get("total_trades", 0) + 1
-                    state["breakevens"] = state.get("breakevens", 0) + 1
-                    
-                    send_telegram(
-                        f"🛡️ *[골드 선물 LONG - 본전 마감 (Breakeven 방어 성공)]*\n"
-                        f"━━━━━━━━━━━━━━━━━━━━━━\n"
-                        f"🪙 종목: `Gold Futures (GC=F)`\n"
-                        f"💰 도달가 (진입가 방어): `{fmt_money(recent_low)}`\n"
-                        f"⏱️ 시간: `{ts()} (KST)`", 
-                        add_chart_btn=True
-                    )
-                    time.sleep(1.5)
-                    send_performance_report(state)
-                else:
-                    state["total_trades"] = state.get("total_trades", 0) + 1
-                    state["losses"] = state.get("losses", 0) + 1
-                    
-                    send_telegram(
-                        f"🛡️ *[골드 선물 LONG - 손절(SL) 도달]*\n"
-                        f"━━━━━━━━━━━━━━━━━━━━━━\n"
-                        f"🪙 종목: `Gold Futures (GC=F)`\n"
-                        f"📉 최종 도달가: `{fmt_money(recent_low)}`\n"
-                        f"⏱️ 시간: `{ts()} (KST)`", 
-                        add_chart_btn=True
-                    )
-                    time.sleep(1.5)
-                    send_performance_report(state)
-                
-                state["position"] = None
-                save_state(state)
-                return
-
-        else: # SHORT 포지션
-            # TP1 도달
-            if "TP1" not in hit_list and recent_low <= pos["tp1"]:
-                hit_list.append("TP1")
-                pos["tp1_hit"] = True
-                pos["sl"] = pos["entry"]
-                send_telegram(
-                    f"🎯 *[골드 선물 SHORT - TP1 도달 & 본전스탑]*\n"
-                    f"━━━━━━━━━━━━━━━━━━━━━━\n"
-                    f"🪙 종목: `Gold Futures (GC=F)`\n"
-                    f"💰 도달가: `{fmt_money(recent_low)}`\n"
-                    f"🛡️ 조치: 손절가를 진입가(`{fmt_money(pos['entry'])}`)로 수정했습니다.\n"
-                    f"⏱️ 시간: `{ts()} (KST)`", 
-                    add_chart_btn=True
-                )
-                save_state(state)
-                time.sleep(1)
-
-            # TP2 도달
-            if "TP2" not in hit_list and recent_low <= pos["tp2"]:
-                hit_list.append("TP2")
-                send_telegram(
-                    f"🎯 *[골드 선물 SHORT TP2 2차 익절 도달]*\n"
-                    f"━━━━━━━━━━━━━━━━━━━━━━\n"
-                    f"🪙 종목: `Gold Futures (GC=F)`\n"
-                    f"💰 도달가: `{fmt_money(recent_low)}`\n"
-                    f"⏱️ 시간: `{ts()} (KST)`", 
-                    add_chart_btn=True
-                )
-                save_state(state)
-                time.sleep(1)
-
-            # TP3 최종 익절
-            if "TP3" not in hit_list and recent_low <= pos["tp3"]:
-                hit_list.append("TP3")
-                state["total_trades"] = state.get("total_trades", 0) + 1
-                state["wins"] = state.get("wins", 0) + 1
-                
-                send_telegram(
-                    f"🎉 *[골드 선물 SHORT - TP3 최종 익절 달성]*\n"
-                    f"━━━━━━━━━━━━━━━━━━━━━━\n"
-                    f"🪙 종목: `Gold Futures (GC=F)`\n"
-                    f"💰 최종 도달가: `{fmt_money(recent_low)}`\n"
-                    f"⏱️ 시간: `{ts()} (KST)`", 
-                    add_chart_btn=True
-                )
-                time.sleep(1.5)
-                send_performance_report(state)
-                state["position"] = None
-                save_state(state)
-                return
-
-            # SL 청산 (손절 / 본전 방어)
-            if recent_high >= pos["sl"]:
-                if pos.get("tp1_hit", False):
-                    state["total_trades"] = state.get("total_trades", 0) + 1
-                    state["breakevens"] = state.get("breakevens", 0) + 1
-                    
-                    send_telegram(
-                        f"🛡️ *[골드 선물 SHORT - 본전 마감 (Breakeven 방어 성공)]*\n"
-                        f"━━━━━━━━━━━━━━━━━━━━━━\n"
-                        f"🪙 종목: `Gold Futures (GC=F)`\n"
-                        f"💰 도달가 (진입가 방어): `{fmt_money(recent_high)}`\n"
-                        f"⏱️ 시간: `{ts()} (KST)`", 
-                        add_chart_btn=True
-                    )
-                    time.sleep(1.5)
-                    send_performance_report(state)
-                else:
-                    state["total_trades"] = state.get("total_trades", 0) + 1
-                    state["losses"] = state.get("losses", 0) + 1
-                    
-                    send_telegram(
-                        f"🛡️ *[골드 선물 SHORT - 손절(SL) 도달]*\n"
-                        f"━━━━━━━━━━━━━━━━━━━━━━\n"
-                        f"🪙 종목: `Gold Futures (GC=F)`\n"
-                        f"📉 최종 도달가: `{fmt_money(recent_high)}`\n"
-                        f"⏱️ 시간: `{ts()} (KST)`", 
-                        add_chart_btn=True
-                    )
-                    time.sleep(1.5)
-                    send_performance_report(state)
-                
-                state["position"] = None
-                save_state(state)
-                return
-
-        save_state(state)
-        return
-
-    # 2. 신규 진입 스캔 (상위 추세 + 세션 시간 + RSI 조건)
-    current_hour = now().hour
-    # 유동성이 집중되는 메이저 세션 (런던~뉴욕 장: KST 15:00 ~ 02:00)
-    is_active_session = (current_hour >= 15 or current_hour < 2)
-
-    direction = None
-    # 롱: 1시간봉 상승추세 + RSI 35 이하
-    if rsi <= 35 and htf_trend == "BULLISH" and is_active_session:
-        direction = "LONG"
-    # 숏: 1시간봉 하락추세 + RSI 65 이상
-    elif rsi >= 65 and htf_trend == "BEARISH" and is_active_session:
-        direction = "SHORT"
-
-    if direction:
-        risk = atr * 1.5
-        if direction == "LONG":
-            sl = price - risk
-            tp1 = price + risk * 1.2
-            tp2 = price + risk * 2.2
-            tp3 = price + risk * 3.5
-            pos_text = "롱 (LONG) 🟢"
-        else:
-            sl = price + risk
-            tp1 = price - risk * 1.2
-            tp2 = price - risk * 2.2
-            tp3 = price - risk * 3.5
-            pos_text = "숏 (SHORT) 🔴"
-
-        msg = (
-            f"🌟 *골드 선물 고도화 스마트 시그널* 🌟\n"
-            f"━━━━━━━━━━━━━━━━━━━━━━\n"
-            f"🪙 종목: `Gold Futures (GC=F)`\n"
-            f"📊 포지션: **{pos_text}**\n"
-            f"💰 진입가: `{fmt_money(price)}`\n"
-            f"📊 지표: `RSI {rsi:.2f}` | `1H 추세: {htf_trend}`\n\n"
-            f"🎯 목표가 (Take Profit)\n"
-            f"  • 1차 (TP1): `{fmt_money(tp1)}` (본전스탑)\n"
-            f"  • 2차 (TP2): `{fmt_money(tp2)}`\n"
-            f"  • 3차 (TP3): `{fmt_money(tp3)}`\n\n"
-            f"🛡️ 손절가 (Stop Loss): `{fmt_money(sl)}`\n"
-            f"⏱️ 시간: `{ts()} (KST)`"
-        )
-
-        if send_telegram(msg, add_chart_btn=True):
-            state["position"] = {
-                "direction": direction,
-                "entry": price,
-                "sl": sl,
-                "tp1": tp1,
-                "tp2": tp2,
-                "tp3": tp3,
-                "tp1_hit": False,
-                "hit": []
-            }
-            save_state(state)
-            print(f"[{ts()}] High-Quality Gold Signal Sent successfully.")
+    return (f"📊 <b>[전적 통계 브리핑]</b>\n"
+            f"{t_str}\n"
+            f"{m_str}")
 
 def main():
-    print(f"===================================")
-    print(f" GOLD FUTURES ADVANCED BOT RUNNING")
-    print(f"===================================")
-    process_gold_signal()
+    print("====================================")
+    print(f" KOREA STOCK HUNTER SCREENER V{V}")
+    print("====================================")
+
+    if not is_market_open():
+        print(f"[MARKET CLOSED] 현재는 국장 운영 시간이 아닙니다. (KST: {ts()}) 작업을 건너뜁니다.")
+        return
+
+    state = get_state()
+    total_stats = state.get("total_stats")
+    monthly_stats = state.get("monthly_stats")
+
+    # 1. 시장 동향 및 경보 체크 전송
+    check_market_trend_and_leaders()
+
+    positions = state.get("positions", [])
+    print(f"[STATUS] 현재 유지 중인 포지션: {len(positions)} / {MAX_SLOTS}")
+
+    # 2. 기존 포지션 청산, 목표가 및 타임스톱 체크
+    updated_positions = []
+    for pos in positions:
+        code = pos.get("code")
+        try:
+            df = fdr.DataReader(code)
+            if df.empty:
+                updated_positions.append(pos)
+                continue
+            
+            current_price = float(df['Close'].iloc[-1])
+            sl = pos.get("sl", 0)
+            entry = pos.get("entry", 0)
+            tp1 = pos.get("tp1", 0)
+            tp2 = pos.get("tp2", 0)
+            tp3 = pos.get("tp3", 0)
+            hit = pos.setdefault("hit", [])
+            
+            entry_time_str = pos.get("time", ts())
+            try:
+                entry_date = datetime.strptime(entry_time_str.split()[0], "%Y-%m-%d")
+                days_elapsed = (now().date() - entry_date.date()).days
+            except:
+                days_elapsed = 0
+
+            # [타임스톱 청산] -> TP1/TP2를 달성한 상태에서 타임스톱이면 승리(Wins), 달성 못했으면 무승부(Draws)
+            if days_elapsed >= 7:
+                if "TP1" in hit or "TP2" in hit:
+                    total_stats["wins"] += 1
+                    monthly_stats["wins"] += 1
+                    report_title = "🏆 <b>[수익 확보 타임스톱 청산 리포트]</b> 🔥"
+                    report_desc = "📌 <i>TP1/TP2 수익 달성 후 7일 경과로 잔여 물량을 수익 청산합니다.</i>"
+                else:
+                    total_stats["draws"] += 1
+                    monthly_stats["draws"] += 1
+                    report_title = "⏱ <b>[타임스톱 회전 청산 리포트]</b> ⚖️"
+                    report_desc = "📌 <i>방향성 부재로 슬롯 회전율을 위해 원금 마감 처리합니다.</i>"
+
+                stats_msg = get_stats_string(total_stats, monthly_stats)
+                tg(f"""{report_title}
+━━━━━━━━━━━━━━━━━━━━━━━
+종목명: <b>{pos.get('name')} ({code})</b>
+보유 기간: 7일 경과
+청산가격: <code>{m(current_price)}</code>
+{report_desc}
+-----------------------------------------------
+{stats_msg}
+━━━━━━━━━━━━━━━━━━━━━━━""")
+                continue
+
+            # [손절가 / 스탑라인 이탈 판정]
+            if current_price <= sl:
+                # [핵심 로직] TP1이나 TP2를 터치한 후 스탑라인에 걸린 경우 -> 확실한 '수익 승리(Wins)'로 처리!
+                if "TP1" in hit or "TP2" in hit or sl > entry:
+                    total_stats["wins"] += 1
+                    monthly_stats["wins"] += 1
+                    report_title = "🎯 <b>[수익 확보(TP 달성) 마감 리포트]</b> 🔥"
+                    report_desc = "📌 <i>1차/2차 목표 달성으로 이미 수익을 확보한 뒤 안전하게 승리(Wins)로 마감되었습니다!</i>"
+                else:
+                    # TP1도 못 터치하고 진입가 이하 초기 손절가 이탈 -> pure 손절(Losses)
+                    total_stats["losses"] += 1
+                    monthly_stats["losses"] += 1
+                    report_title = "🛡 <b>[손절가(SL) 도달 청산 리포트]</b> ❌"
+                    report_desc = "📌 <i>원칙 매매를 위해 손절 처리가 완료되었습니다.</i>"
+
+                stats_msg = get_stats_string(total_stats, monthly_stats)
+                tg(f"""{report_title}
+━━━━━━━━━━━━━━━━━━━━━━━
+종목명: <b>{pos.get('name')} ({code})</b>
+청산가격: <code>{m(current_price)}</code>
+{report_desc}
+-----------------------------------------------
+{stats_msg}
+━━━━━━━━━━━━━━━━━━━━━━━""")
+                continue
+
+            # [3차 목표가 완수] -> 당연히 완벽 승리(Wins)
+            if current_price >= tp3:
+                if "TP1" not in hit: hit.append("TP1")
+                if "TP2" not in hit: hit.append("TP2")
+                if "TP3" not in hit: hit.append("TP3")
+                total_stats["wins"] += 1
+                monthly_stats["wins"] += 1
+                stats_msg = get_stats_string(total_stats, monthly_stats)
+                tg(f"""🏆 <b>[3차 목표가 완수 리포트]</b> 🔥
+━━━━━━━━━━━━━━━━━━━━━━━
+종목명: <b>{pos.get('name')} ({code})</b>
+최종 청산가: <code>{m(current_price)}</code>
+🎉 <i>모든 목표가를 성공적으로 달성했습니다!</i>
+-----------------------------------------------
+{stats_msg}
+━━━━━━━━━━━━━━━━━━━━━━━""")
+                continue
+
+            if current_price >= tp2 and "TP2" not in hit:
+                if "TP1" not in hit: hit.append("TP1")
+                hit.append("TP2")
+                pos["sl"] = tp1
+                tg(f"""🎯 <b>[2차 목표가 달성 리포트]</b>
+━━━━━━━━━━━━━━━━━━━━━━━
+종목명: <b>{pos.get('name')} ({code})</b>
+조치사항: <b>손절가를 1차 목표가({m(tp1)})로 상향합니다. (수익 확정)</b>
+━━━━━━━━━━━━━━━━━━━━━━━""")
+            elif current_price >= tp1 and "TP1" not in hit:
+                hit.append("TP1")
+                pos["sl"] = pos["entry"]
+                tg(f"""🎯 <b>[1차 목표가 달성 리포트]</b>
+━━━━━━━━━━━━━━━━━━━━━━━
+종목명: <b>{pos.get('name')} ({code})</b>
+조치사항: <b>손절가를 본전({m(pos['entry'])})으로 상향하여 리스크를 제거합니다.</b>
+━━━━━━━━━━━━━━━━━━━━━━━""")
+
+            updated_positions.append(pos)
+        except Exception as e:
+            print(f"[ERROR] 종목 {code} 체크 중 오류:", e)
+            updated_positions.append(pos)
+
+    # 3. 신규 종목 스캔
+    active_codes = [p.get("code") for p in updated_positions]
+    
+    if len(updated_positions) < MAX_SLOTS:
+        print(f"[SCAN] 빈 슬롯 존재 ({len(updated_positions)}/{MAX_SLOTS}). 고승률 신규 종목 스캔 시작")
+        
+        try:
+            krx = fdr.StockListing('KRX')
+            priority_codes = ['005930', '000660', '010130']
+            candidates = krx.dropna(subset=['Code', 'Name']).head(150)
+            
+            scan_rows = []
+            for p_code in priority_codes:
+                matched = krx[krx['Code'] == p_code]
+                if not matched.empty:
+                    scan_rows.append(matched.iloc[0])
+            for _, r in candidates.iterrows():
+                if r['Code'] not in priority_codes:
+                    scan_rows.append(r)
+
+            for row in scan_rows:
+                if len(updated_positions) >= MAX_SLOTS:
+                    break
+                
+                code = str(row['Code'])
+                name = str(row['Name'])
+                
+                if code in active_codes:
+                    continue
+                
+                try:
+                    df = fdr.DataReader(code)
+                    if len(df) < 30:
+                        continue
+                    
+                    close = float(df['Close'].iloc[-1])
+                    if not (3000 <= close <= 1000000):
+                        continue
+
+                    ma5 = float(df['Close'].rolling(5).mean().iloc[-1])
+                    ma20 = float(df['Close'].rolling(20).mean().iloc[-1])
+                    volume = float(df['Volume'].iloc[-1])
+                    vol_ma20 = float(df['Volume'].rolling(20).mean().iloc[-1])
+                    
+                    trading_value = close * volume
+                    if trading_value < 5_000_000_000:
+                        continue
+
+                    if close > ma20 and ma5 > ma20 and volume > vol_ma20:
+                        atr_series = calculate_atr(df)
+                        atr_val = float(atr_series.iloc[-1]) if not atr_series.empty and not np.isnan(atr_series.iloc[-1]) else close * 0.035
+                        
+                        volatility_pct = max(0.02, min(0.045, atr_val / close))
+                        
+                        entry = close
+                        sl = entry * (1 - volatility_pct)
+                        tp1 = entry * (1 + volatility_pct * 1.5)
+                        tp2 = entry * (1 + volatility_pct * 2.8)
+                        tp3 = entry * (1 + volatility_pct * 4.2)
+
+                        sl_pct_str = f"-{volatility_pct*100:.1f}%"
+                        tp1_pct_str = f"+{volatility_pct*1.5*100:.1f}%"
+                        tp2_pct_str = f"+{volatility_pct*2.8*100:.1f}%"
+                        tp3_pct_str = f"+{volatility_pct*4.2*100:.1f}%"
+
+                        sector_val = row.get('Sector', None)
+                        industry_val = row.get('Industry', None)
+                        
+                        if pd.notna(sector_val) and str(sector_val).strip() != "":
+                            catalyst_str = f"관련 업종: <b>{sector_val}</b> 대형 수급 유입"
+                        elif pd.notna(industry_val) and str(industry_val).strip() != "":
+                            catalyst_str = f"주요 모멘텀: <b>{industry_val}</b> 강세"
+                        else:
+                            catalyst_str = "기관/외인 순매수 집중 및 5일/20일 정배열 안착"
+
+                        new_pos = {
+                            "code": code,
+                            "name": name,
+                            "entry": entry,
+                            "sl": sl,
+                            "tp1": tp1,
+                            "tp2": tp2,
+                            "tp3": tp3,
+                            "hit": [],
+                            "time": ts()
+                        }
+                        
+                        updated_positions.append(new_pos)
+                        active_codes.append(code)
+
+                        tg(f"""🚨 <b>[고승률 변동성 종목 포착 리포트]</b> 🚨
+━━━━━━━━━━━━━━━━━━━━━━━
+📌 <b>포트폴리오 슬롯: [ {len(updated_positions)} / {MAX_SLOTS} ]</b>
+🪙 <b>종목명:</b> <b>{name} ({code})</b>
+💰 <b>추정 진입가:</b> <code>{m(entry)}</code>
+
+🔥 <b>[상승 이유 및 고승률 소재]</b>
+• <b>기술적 조건:</b> 5/20일선 정배열 + 거래량 폭증
+• <b>수급 테마/소재:</b> {catalyst_str}
+
+🛡 <b>손절가 (SL):</b> <code>{m(sl)}</code> ({sl_pct_str})
+🎯 <b>1차 목표가 (TP1):</b> <code>{m(tp1)}</code> ({tp1_pct_str})
+🎯 <b>2차 목표가 (TP2):</b> <code>{m(tp2)}</code> ({tp2_pct_str})
+🎯 <b>3차 목표가 (TP3):</b> <code>{m(tp3)}</code> ({tp3_pct_str})
+━━━━━━━━━━━━━━━━━━━━━━━
+💡 <b>[매매 가이드]</b> 전체 자금의 <b>5~7% 이내</b>로 분할 매수하고, 본 종목은 승률 70% 타겟 리스크 관리 모드가 적용됩니다.""")
+                except Exception as inner_e:
+                    print(f"[CANDIDATE ERROR] 종목 {code} 처리 중 예외:", inner_e)
+                    continue
+        except Exception as e:
+            print("[SCAN ERROR] 종목 신규 스캔 중 오류:", e)
+    else:
+        print("[SCAN SKIP] 15개 슬롯이 모두 채워져 있습니다.")
+
+    state["positions"] = updated_positions
+    state["total_stats"] = total_stats
+    state["monthly_stats"] = monthly_stats
+    save(STATE, state)
+    print(f"[DONE] 최신 상태가 {STATE} 파일에 저장되었습니다.")
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception as e:
+        print("[FATAL]", repr(e))
+        raise
