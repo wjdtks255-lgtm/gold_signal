@@ -3,5 +3,16 @@
   "total_trades": 5,
   "wins": 2,
   "losses": 2,
-  "breakevens": 1
+  "breakevens": 1,
+  "position": {
+    "direction": "LONG",
+    "entry": 4151.89990234375,
+    "sl": 4139.89990234375,
+    "tp1": 4169.89990234375,
+    "tp2": 4187.89990234375,
+    "tp3": 4211.89990234375,
+    "tp1_hit": false,
+    "hit": []
+  },
+  "last_loss_time": 0
 }
