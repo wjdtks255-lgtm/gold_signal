@@ -123,10 +123,7 @@ def send_telegram(text: str, add_chart_btn: bool = False) -> bool:
         time.sleep(1)
     return False
 
-# --------------------------------------------------------------------------- #
-#   3️⃣ 금 선물 데이터 수집 및 지표 계산
-# --------------------------------------------------------------------------- #
-def fetch_gold_data(interval: str = "1m", period: str = "1d") -> pd.DataFrame:
+def fetch_gold_data(interval: str = "15m", period: str = "5d") -> pd.DataFrame:
     try:
         ticker = yf.Ticker(SYMBOL)
         df = ticker.history(period=period, interval=interval)
@@ -163,36 +160,78 @@ def fmt_money(v: Any) -> str:
         return "$0.00"
 
 # --------------------------------------------------------------------------- #
-#   4️⃣ 골드 실전 스케일에 맞춘 타점 엔진 (최소 간격 보장)
+#   3️⃣ 상위 트레이더 4대 전략 분석 엔진 (Dynamic Strategy Evaluator)
+# --------------------------------------------------------------------------- #
+def analyze_top_trader_strategies(df: pd.DataFrame) -> tuple:
+    """
+    Returns: (direction: str or None, strategy_name: str)
+    """
+    if df.empty or len(df) < 20:
+        return None, ""
+
+    latest = df.iloc[-1]
+    prev = df.iloc[-2]
+    price = float(latest['close'])
+    
+    # 1. 유동성 스윕 (Liquidity Sweep) 감지
+    recent_high = df['high'].iloc[-15:-1].max()
+    recent_low = df['low'].iloc[-15:-1].min()
+    
+    if prev['high'] > recent_high and price < recent_high:
+        # 고점을 찌르고 내려온 휩소 (숏 기회)
+        return "SHORT", "유동성 스윕 (Liquidity Sweep - Short)"
+    if prev['low'] < recent_low and price > recent_low:
+        # 저점을 찌르고 말아 올린 휩소 (롱 기회)
+        return "LONG", "유동성 스윕 (Liquidity Sweep - Long)"
+
+    # 2. 오더블록 / 매물대 리테스트 (Order Block / Pullback)
+    body_size = abs(latest['close'] - latest['open'])
+    avg_body = (abs(df['close'] - df['open'])).rolling(10).mean().iloc[-1]
+    
+    if body_size > avg_body * 1.5:
+        if latest['close'] > latest['open']: # 강한 양봉 (오더블록 지지 형성 후 반등)
+            return "LONG", "스마트머니 오더블록 (Order Block - Long)"
+        else: # 강한 음봉 (오더블록 저항 형성 후 하락)
+            return "SHORT", "스마트머니 오더블록 (Order Block - Short)"
+
+    # 3. 라운드 넘버 근접성 검사 (Key Round Numbers: e.g., $4,100, $4,150, $4,200)
+    remainder = price % 50
+    if remainder < 3 or remainder > 47:
+        if latest['close'] > prev['close']:
+            return "LONG", "라운드 넘버 지지 반등 (Round Number - Long)"
+        else:
+            return "SHORT", "라운드 넘버 저항 거부 (Round Number - Short)"
+
+    # 4. 모멘텀 & 볼륨 트렌드 추종 (POC / Momentum)
+    rsi = float(latest['rsi']) if not np.isnan(latest['rsi']) else 50.0
+    if rsi < 38:
+        return "LONG", "과매도 반전 추세 (RSI Momentum - Long)"
+    elif rsi > 62:
+        return "SHORT", "과매수 반전 추세 (RSI Momentum - Short)"
+
+    return None, ""
+
+# --------------------------------------------------------------------------- #
+#   4️⃣ 메인 프로세스 (포지션 락 적용)
 # --------------------------------------------------------------------------- #
 def process_gold_signal():
     state = load_state()
-    df = fetch_gold_data(interval="15m", period="5d")
-    if df.empty:
-        print(f"[{ts()}] Failed to fetch gold data.")
-        return
-
-    df = calculate_indicators(df)
-    latest = df.iloc[-1]
-    
-    price = float(latest['close'])
-    rsi = float(latest['rsi']) if 'rsi' in latest and not np.isnan(latest['rsi']) else 50.0
-    atr = float(latest['atr']) if 'atr' in latest and not np.isnan(latest['atr']) else 15.0
-    
-    if atr < 5.0:
-        atr = 12.0
-
-    print(f"[{ts()}] Gold Price: {fmt_money(price)} | 15m RSI: {rsi:.2f} | ATR: {atr:.2f}")
-
     pos = state.get("position")
 
+    # 🚨 [포지션 락(Position Lock)] 이미 진행 중인 포지션이 있다면 신규 타점 스캔을 전면 차단하고 관리만 수행!
     if pos:
+        print(f"[{ts()}] [POSITION LOCK ACTIVE] 기존 포지션 존속 중. 신규 타점 스캔을 건너뜁니다.")
+        
+        df_1m = fetch_gold_data(interval="1m", period="1d")
+        if df_1m.empty:
+            return
+        
+        latest_1m = df_1m.iloc[-1]
+        recent_high = float(latest_1m['high'])
+        recent_low = float(latest_1m['low'])
+        
         long = pos["direction"] == "LONG"
         hit_list = pos.setdefault("hit", [])
-
-        df_1m = fetch_gold_data(interval="1m", period="1d")
-        recent_high = float(df_1m['high'].tail(10).max()) if not df_1m.empty else price
-        recent_low = float(df_1m['low'].tail(10).min()) if not df_1m.empty else price
 
         if long:
             if "TP1" not in hit_list and recent_high >= pos["tp1"]:
@@ -208,7 +247,6 @@ def process_gold_signal():
                     f"⏱️ 시간: `{ts()} (KST)`", add_chart_btn=True
                 )
                 save_state(state)
-                time.sleep(1)
 
             if "TP2" not in hit_list and recent_high >= pos["tp2"]:
                 hit_list.append("TP2")
@@ -220,7 +258,6 @@ def process_gold_signal():
                     f"⏱️ 시간: `{ts()} (KST)`", add_chart_btn=True
                 )
                 save_state(state)
-                time.sleep(1)
 
             if "TP3" not in hit_list and recent_high >= pos["tp3"]:
                 hit_list.append("TP3")
@@ -233,7 +270,6 @@ def process_gold_signal():
                     f"💰 최종 도달가: `{fmt_money(recent_high)}`\n"
                     f"⏱️ 시간: `{ts()} (KST)`", add_chart_btn=True
                 )
-                time.sleep(1.5)
                 send_performance_report(state)
                 state["position"] = None
                 save_state(state)
@@ -250,7 +286,6 @@ def process_gold_signal():
                         f"💰 도달가 (진입가 방어): `{fmt_money(recent_low)}`\n"
                         f"⏱️ 시간: `{ts()} (KST)`", add_chart_btn=True
                     )
-                    time.sleep(1.5)
                     send_performance_report(state)
                 else:
                     state["total_trades"] = state.get("total_trades", 0) + 1
@@ -262,14 +297,13 @@ def process_gold_signal():
                         f"📉 최종 도달가: `{fmt_money(recent_low)}`\n"
                         f"⏱️ 시간: `{ts()} (KST)`", add_chart_btn=True
                     )
-                    time.sleep(1.5)
                     send_performance_report(state)
                 
                 state["position"] = None
                 save_state(state)
                 return
 
-        else: # SHORT 포지션
+        else: # SHORT 포지션 관리
             if "TP1" not in hit_list and recent_low <= pos["tp1"]:
                 hit_list.append("TP1")
                 pos["tp1_hit"] = True
@@ -283,7 +317,6 @@ def process_gold_signal():
                     f"⏱️ 시간: `{ts()} (KST)`", add_chart_btn=True
                 )
                 save_state(state)
-                time.sleep(1)
 
             if "TP2" not in hit_list and recent_low <= pos["tp2"]:
                 hit_list.append("TP2")
@@ -295,7 +328,6 @@ def process_gold_signal():
                     f"⏱️ 시간: `{ts()} (KST)`", add_chart_btn=True
                 )
                 save_state(state)
-                time.sleep(1)
 
             if "TP3" not in hit_list and recent_low <= pos["tp3"]:
                 hit_list.append("TP3")
@@ -308,7 +340,6 @@ def process_gold_signal():
                     f"💰 최종 도달가: `{fmt_money(recent_low)}`\n"
                     f"⏱️ 시간: `{ts()} (KST)`", add_chart_btn=True
                 )
-                time.sleep(1.5)
                 send_performance_report(state)
                 state["position"] = None
                 save_state(state)
@@ -325,7 +356,6 @@ def process_gold_signal():
                         f"💰 도달가 (진입가 방어): `{fmt_money(recent_high)}`\n"
                         f"⏱️ 시간: `{ts()} (KST)`", add_chart_btn=True
                     )
-                    time.sleep(1.5)
                     send_performance_report(state)
                 else:
                     state["total_trades"] = state.get("total_trades", 0) + 1
@@ -337,7 +367,6 @@ def process_gold_signal():
                         f"📉 최종 도달가: `{fmt_money(recent_high)}`\n"
                         f"⏱️ 시간: `{ts()} (KST)`", add_chart_btn=True
                     )
-                    time.sleep(1.5)
                     send_performance_report(state)
                 
                 state["position"] = None
@@ -347,15 +376,24 @@ def process_gold_signal():
         save_state(state)
         return
 
-    # 신규 타점 스캔
-    direction = None
-    if rsi <= 40:
-        direction = "LONG"
-    elif rsi >= 60:
-        direction = "SHORT"
+    # ----------------전체 포지션이 없을 때만 신규 타점 스캔---------------- #
+    df = fetch_gold_data(interval="15m", period="5d")
+    if df.empty:
+        return
+
+    df = calculate_indicators(df)
+    latest = df.iloc[-1]
+    price = float(latest['close'])
+    atr = float(latest['atr']) if not np.isnan(latest['atr']) else 15.0
+    if atr < 8.0:
+        atr = 12.0
+
+    # 상위 트레이더 4대 전략 평가 실행
+    direction, strategy_name = analyze_top_trader_strategies(df)
+    print(f"[{ts()}] Gold Price: {fmt_money(price)} | Strategy Signal: {direction} ({strategy_name})")
 
     if direction:
-        risk = max(atr * 0.8, 10.0) 
+        risk = max(atr * 1.0, 10.0)
         if direction == "LONG":
             sl = price - risk
             tp1 = price + risk * 1.5
@@ -370,12 +408,12 @@ def process_gold_signal():
             pos_text = "숏 (SHORT) 🔴"
 
         msg = (
-            f"⚡ *골드 선물 프로 실전 타점 (수익폭 보정)* ⚡\n"
+            f"🏛️ *골드 선물 기관급 앙상블 타점* 🏛️\n"
             f"━━━━━━━━━━━━━━━━━━━━━━\n"
             f"🪙 종목: `Gold Futures (GC=F)`\n"
             f"📊 포지션: **{pos_text}**\n"
-            f"💰 진입가: `{fmt_money(price)}`\n"
-            f"📊 15m RSI: `{rsi:.2f}`\n\n"
+            f"🎯 채택 전략: `{strategy_name}`\n"
+            f"💰 진입가: `{fmt_money(price)}`\n\n"
             f"🎯 목표가 (Take Profit)\n"
             f"  • 1차 (TP1): `{fmt_money(tp1)}` (본전스탑)\n"
             f"  • 2차 (TP2): `{fmt_money(tp2)}`\n"
@@ -396,11 +434,11 @@ def process_gold_signal():
                 "hit": []
             }
             save_state(state)
-            print(f"[{ts()}] Scaled Gold Signal Sent successfully.")
+            print(f"[{ts()}] Master Ensemble Signal Sent successfully.")
 
 def main():
     print(f"===================================")
-    print(f" GOLD FUTURES SCALED BOT RUNNING")
+    print(f" MASTER GOLD ENSEMBLE BOT RUNNING")
     print(f"===================================")
     process_gold_signal()
 
