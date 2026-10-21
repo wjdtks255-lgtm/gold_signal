@@ -1,5 +1,14 @@
 {
-  "position": null,
+  "position": {
+    "direction": "LONG",
+    "entry": 4129.2001953125,
+    "sl": 4127.885777064732,
+    "tp1": 4131.171822684152,
+    "tp2": 4132.88056640625,
+    "tp3": 4135.115077427456,
+    "tp1_hit": false,
+    "hit": []
+  },
   "last_signal_time": 0,
   "total_trades": 3,
   "wins": 2,
