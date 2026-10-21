@@ -82,7 +82,6 @@ def send_performance_report(state: Dict[str, Any]) -> None:
     breakevens = state.get("breakevens", 0)
     losses = state.get("losses", 0)
     
-    # TP3 익절 + TP1 달성 후 본전 방어 건을 모두 성공(Successful Trades)으로 집계
     successful_trades = wins + breakevens
     success_rate = (successful_trades / total * 100) if total > 0 else 0.0
     
@@ -130,18 +129,18 @@ def send_telegram(text: str, add_chart_btn: bool = False) -> bool:
     return False
 
 # --------------------------------------------------------------------------- #
-#   4️⃣ 금 선물 데이터 수집 및 지표 계산
+#   4️⃣ 금 선물 데이터 수집 및 멀티 타임프레임(MTF) 지표 계산
 # --------------------------------------------------------------------------- #
-def fetch_gold_data() -> pd.DataFrame:
+def fetch_gold_data(interval: str = "1m", period: str = "1d") -> pd.DataFrame:
     try:
         ticker = yf.Ticker(SYMBOL)
-        df = ticker.history(period="1d", interval="1m")
+        df = ticker.history(period=period, interval=interval)
         if df.empty:
             return pd.DataFrame()
         df.columns = [c.lower() for c in df.columns]
         return df
     except Exception as e:
-        print(f"[{ts()}] Data Fetch Error: {e}")
+        print(f"[{ts()}] Data Fetch Error ({interval}): {e}")
         return pd.DataFrame()
 
 def calculate_indicators(df: pd.DataFrame) -> pd.DataFrame:
@@ -162,6 +161,22 @@ def calculate_indicators(df: pd.DataFrame) -> pd.DataFrame:
     
     return df
 
+# 상위 타임프레임(1시간봉) 대세 추세 분석 (EMA 50 기준)
+def get_higher_timeframe_trend() -> str:
+    df_1h = fetch_gold_data(interval="1h", period="7d")
+    if df_1h.empty or len(df_1h) < 50:
+        return "NEUTRAL"
+    
+    ema50 = df_1h['close'].ewm(span=50, adjust=False).mean()
+    last_close = float(df_1h['close'].iloc[-1])
+    last_ema = float(ema50.iloc[-1])
+
+    if last_close > last_ema:
+        return "BULLISH"
+    elif last_close < last_ema:
+        return "BEARISH"
+    return "NEUTRAL"
+
 def fmt_money(v: Any) -> str:
     try:
         return f"${float(v):,.2f}"
@@ -169,11 +184,11 @@ def fmt_money(v: Any) -> str:
         return "$0.00"
 
 # --------------------------------------------------------------------------- #
-#   5️⃣ 포지션 및 TP/SL 단계별 독립 감지 엔진
+#   5️⃣ 포지션 감시 및 신규 시그널 포착 엔진
 # --------------------------------------------------------------------------- #
 def process_gold_signal():
     state = load_state()
-    df = fetch_gold_data()
+    df = fetch_gold_data(interval="1m", period="1d")
     if df.empty:
         print(f"[{ts()}] Failed to fetch gold data.")
         return
@@ -188,16 +203,18 @@ def process_gold_signal():
     recent_high = float(df['high'].tail(15).max())
     recent_low = float(df['low'].tail(15).min())
 
-    print(f"[{ts()}] Gold Price: {fmt_money(price)} (15m Min: {fmt_money(recent_low)} / 15m Max: {fmt_money(recent_high)}) | RSI: {rsi:.2f}")
+    htf_trend = get_higher_timeframe_trend()
+    print(f"[{ts()}] Gold Price: {fmt_money(price)} | 1m RSI: {rsi:.2f} | 1H Trend: {htf_trend}")
 
     pos = state.get("position")
 
+    # 1. 포지션 보유 중인 경우: TP / SL 감시
     if pos:
         long = pos["direction"] == "LONG"
         hit_list = pos.setdefault("hit", [])
 
         if long:
-            # 1. TP1 도달 체크
+            # TP1 도달
             if "TP1" not in hit_list and recent_high >= pos["tp1"]:
                 hit_list.append("TP1")
                 pos["tp1_hit"] = True
@@ -214,7 +231,7 @@ def process_gold_signal():
                 save_state(state)
                 time.sleep(1)
 
-            # 2. TP2 도달 체크
+            # TP2 도달
             if "TP2" not in hit_list and recent_high >= pos["tp2"]:
                 hit_list.append("TP2")
                 send_telegram(
@@ -228,7 +245,7 @@ def process_gold_signal():
                 save_state(state)
                 time.sleep(1)
 
-            # 3. TP3 최종 익절 체크
+            # TP3 최종 익절
             if "TP3" not in hit_list and recent_high >= pos["tp3"]:
                 hit_list.append("TP3")
                 state["total_trades"] = state.get("total_trades", 0) + 1
@@ -248,7 +265,7 @@ def process_gold_signal():
                 save_state(state)
                 return
 
-            # 4. SL 손절 / 본전 마감 체크
+            # SL 청산 (손절 / 본전 방어)
             if recent_low <= pos["sl"]:
                 if pos.get("tp1_hit", False):
                     state["total_trades"] = state.get("total_trades", 0) + 1
@@ -284,7 +301,7 @@ def process_gold_signal():
                 return
 
         else: # SHORT 포지션
-            # 1. TP1 도달 체크
+            # TP1 도달
             if "TP1" not in hit_list and recent_low <= pos["tp1"]:
                 hit_list.append("TP1")
                 pos["tp1_hit"] = True
@@ -301,7 +318,7 @@ def process_gold_signal():
                 save_state(state)
                 time.sleep(1)
 
-            # 2. TP2 도달 체크
+            # TP2 도달
             if "TP2" not in hit_list and recent_low <= pos["tp2"]:
                 hit_list.append("TP2")
                 send_telegram(
@@ -315,7 +332,7 @@ def process_gold_signal():
                 save_state(state)
                 time.sleep(1)
 
-            # 3. TP3 최종 익절 체크
+            # TP3 최종 익절
             if "TP3" not in hit_list and recent_low <= pos["tp3"]:
                 hit_list.append("TP3")
                 state["total_trades"] = state.get("total_trades", 0) + 1
@@ -335,7 +352,7 @@ def process_gold_signal():
                 save_state(state)
                 return
 
-            # 4. SL 손절 / 본전 마감 체크
+            # SL 청산 (손절 / 본전 방어)
             if recent_high >= pos["sl"]:
                 if pos.get("tp1_hit", False):
                     state["total_trades"] = state.get("total_trades", 0) + 1
@@ -373,11 +390,17 @@ def process_gold_signal():
         save_state(state)
         return
 
-    # 신규 진입 스캔
+    # 2. 신규 진입 스캔 (상위 추세 + 세션 시간 + RSI 조건)
+    current_hour = now().hour
+    # 유동성이 집중되는 메이저 세션 (런던~뉴욕 장: KST 15:00 ~ 02:00)
+    is_active_session = (current_hour >= 15 or current_hour < 2)
+
     direction = None
-    if rsi <= 35:
+    # 롱: 1시간봉 상승추세 + RSI 35 이하
+    if rsi <= 35 and htf_trend == "BULLISH" and is_active_session:
         direction = "LONG"
-    elif rsi >= 65:
+    # 숏: 1시간봉 하락추세 + RSI 65 이상
+    elif rsi >= 65 and htf_trend == "BEARISH" and is_active_session:
         direction = "SHORT"
 
     if direction:
@@ -396,15 +419,15 @@ def process_gold_signal():
             pos_text = "숏 (SHORT) 🔴"
 
         msg = (
-            f"🌟 *골드 선물 스마트 시그널* 🌟\n"
+            f"🌟 *골드 선물 고도화 스마트 시그널* 🌟\n"
             f"━━━━━━━━━━━━━━━━━━━━━━\n"
             f"🪙 종목: `Gold Futures (GC=F)`\n"
             f"📊 포지션: **{pos_text}**\n"
             f"💰 진입가: `{fmt_money(price)}`\n"
-            f"📊 RSI: `{rsi:.2f}` | ATR: `{atr:.2f}`\n\n"
+            f"📊 지표: `RSI {rsi:.2f}` | `1H 추세: {htf_trend}`\n\n"
             f"🎯 목표가 (Take Profit)\n"
             f"  • 1차 (TP1): `{fmt_money(tp1)}` (본전스탑)\n"
-            f"  • 2차 (TP2): `{fmt_money`
+            f"  • 2차 (TP2): `{fmt_money(tp2)}`\n"
             f"  • 3차 (TP3): `{fmt_money(tp3)}`\n\n"
             f"🛡️ 손절가 (Stop Loss): `{fmt_money(sl)}`\n"
             f"⏱️ 시간: `{ts()} (KST)`"
@@ -422,17 +445,11 @@ def process_gold_signal():
                 "hit": []
             }
             save_state(state)
-            print(f"[{ts()}] Gold Signal Sent successfully.")
+            print(f"[{ts()}] High-Quality Gold Signal Sent successfully.")
 
 def main():
     print(f"===================================")
-    print(f" GOLD FUTURES BOT RUNNING")
-    print(f"===================================")
-    process_gold_signal()
-
-def main():
-    print(f"===================================")
-    print(f" GOLD FUTURES BOT RUNNING")
+    print(f" GOLD FUTURES ADVANCED BOT RUNNING")
     print(f"===================================")
     process_gold_signal()
 
