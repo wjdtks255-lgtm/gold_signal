@@ -4,7 +4,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 import requests, numpy as np, pandas as pd, yfinance as yf
 
-VERSION = "15.3.1"
+VERSION = "15.3.2"
 TZ = ZoneInfo("Asia/Seoul")
 SYMBOL = "GC=F"
 TV = "https://www.tradingview.com/symbols/GC1!/"
@@ -94,7 +94,6 @@ def telegram(message):
     if not result.get("ok"):
         raise RuntimeError(f"Telegram 오류: {result}")
     
-    # 💡 연속 알림 폭탄 및 텔레그램 플러드 방지를 위한 부드러운 전송 딜레이
     time.sleep(1.2)
     return True
 
@@ -132,16 +131,16 @@ def stats_message(s):
     ))
     rate = 100 * st.get("tp3", 0) / total if total else 0
     return (
-        "📊 <b>GOLD 시그널 종료 통계</b>\n"
+        "📊 <b>골드 시그널 누적 통계 (V15.3.2)</b>\n"
         "━━━━━━━━━━━━━━\n"
-        f"총 종료 시그널: <b>{total}</b>\n"
-        f"TP3 최종 도달: {st.get('tp3', 0)}\n"
-        f"TP2 도달 후 스탑 종료: {st.get('stop_after_tp2', 0)}\n"
-        f"TP1 도달 후 스탑 종료: {st.get('stop_after_tp1', 0)}\n"
-        f"TP1 전 손절: {st.get('stop_before_tp1', 0)}\n"
-        f"TP3 기준 승률: <b>{rate:.1f}%</b>\n"
+        f"총 종료된 시그널: <b>{total}건</b>\n"
+        f"🎯 TP3 최종 익절: {st.get('tp3', 0)}건\n"
+        f"🛡 TP2 도달 후 방어 종료: {st.get('stop_after_tp2', 0)}건\n"
+        f"🛡 TP1 도달 후 방어 종료: {st.get('stop_after_tp1', 0)}건\n"
+        f"🛑 TP1 미달 전 손절: {st.get('stop_before_tp1', 0)}건\n"
+        f"📈 TP3 기준 최종 승률: <b>{rate:.1f}%</b>\n"
         "━━━━━━━━━━━━━━\n"
-        "<i>승률 = TP3 종료 ÷ 전체 종료 시그널</i>"
+        "<i>역추세 차단 필터 적용 버전</i>"
     )
 
 def get_bars(interval, period):
@@ -198,10 +197,12 @@ def get_signal():
         raise RuntimeError("ATR 값 오류")
 
     long_score = short_score = 0
+    
     long_score += 2 if h.ema20 > h.ema50 else 0
     short_score += 2 if h.ema20 < h.ema50 else 0
     long_score += 2 if m.ema20 > m.ema50 else 0
     short_score += 2 if m.ema20 < m.ema50 else 0
+    
     long_score += 1 if m.close > m.ema20 and prev.close <= prev.ema20 * 1.003 else 0
     short_score += 1 if m.close < m.ema20 and prev.close >= prev.ema20 * .997 else 0
     long_score += 1 if b.close > b.open and b.closepos > .65 else 0
@@ -212,10 +213,19 @@ def get_signal():
     short_score += 1 if 30 <= b.rsi <= 62 else 0
 
     direction = None
-    if long_score >= 6 and long_score > short_score and h.ema20 > h.ema50:
+    if long_score >= 6 and long_score > short_score:
         direction = "LONG"
-    elif short_score >= 6 and short_score > long_score and h.ema20 < h.ema50:
+    elif short_score >= 6 and short_score > long_score:
         direction = "SHORT"
+
+    if direction == "LONG" and not (h.ema20 > h.ema50 and m.ema20 > m.ema50):
+        direction = None
+    elif direction == "SHORT" and not (h.ema20 < h.ema50 and m.ema20 < m.ema50):
+        direction = None
+
+    if direction and (b.adx < 16 or abs(price - float(b.ema20)) > 1.5 * atr):
+        direction = None
+
     info = {
         "price": price, "atr": atr, "rsi": float(b.rsi),
         "adx": float(b.adx), "long_score": int(long_score),
@@ -223,50 +233,52 @@ def get_signal():
         "score": int(max(long_score, short_score)),
         "bar": str(m5.index[-1])
     }
-    if direction and (b.adx < 14 or abs(price - float(b.ema20)) > 1.5 * atr):
-        direction = None
     return direction, info
 
 def entry_message(p, info):
-    side = "🟢 LONG 매수 관점" if p["side"] == "LONG" else "🔴 SHORT 매도 관점"
+    side = "🟢 롱 (LONG) 매수 추세 진입" if p["side"] == "LONG" else "🔴 숏 (SHORT) 매도 추세 진입"
     return (
-        "🥇 <b>GOLD FUTURES SIGNAL V15.3.1</b>\n"
+        "🥇 <b>골드 선물 스마트 시그널 V15.3.2</b>\n"
         "━━━━━━━━━━━━━━\n"
         f"{side}\n"
         f"진입 기준가: <b>{p['entry']:.2f}</b>\n"
-        f"손절가: <b>{p['sl']:.2f}</b>\n"
-        f"TP1: <b>{p['tp1']:.2f}</b>\n"
-        f"TP2: <b>{p['tp2']:.2f}</b>\n"
-        f"TP3: <b>{p['tp3']:.2f}</b>\n"
+        f"손절가 (SL): <b>{p['sl']:.2f}</b>\n"
+        f"목표가 1 (TP1): <b>{p['tp1']:.2f}</b>\n"
+        f"목표가 2 (TP2): <b>{p['tp2']:.2f}</b>\n"
+        f"목표가 3 (TP3): <b>{p['tp3']:.2f}</b>\n"
         "━━━━━━━━━━━━━━\n"
-        f"신호 점수: {info['score']} | RSI: {info['rsi']:.1f}\n"
+        f"신호 점수: {info['score']}점 | RSI: {info['rsi']:.1f}\n"
         f"ADX: {info['adx']:.1f} | ATR: {info['atr']:.2f}\n"
         f"발생 시각: {stamp()}\n"
-        f'차트: <a href="{TV}">TradingView Gold</a>\n'
-        "⚠️ 가격은 데이터 제공처와 체결 가격에 따라 다를 수 있습니다."
+        f'차트 보기: <a href="{TV}">트레이딩뷰 골드 차트</a>\n'
+        "⚠️ 역추세 필터가 적용된 안전 진입입니다."
     )
 
 def close_position(s, p, reason, price):
     st = s["stats"]
     if reason == "TP3":
         st["tp3"] += 1
-        label = "🎯 TP3 최종 목표 도달"
+        label = "🎯 TP3 최종 목표가 도달 (익절 완료)"
     elif p["tp2_hit"]:
         st["stop_after_tp2"] += 1
-        label = "🛡 TP2 도달 후 보호 스탑 종료"
+        label = "🛡 TP2 도달 후 본절/수익 방어 스탑 종료"
     elif p["tp1_hit"]:
         st["stop_after_tp1"] += 1
-        label = "🛡 TP1 도달 후 보호 스탑 종료"
+        label = "🛡 TP1 도달 후 본절/수익 방어 스탑 종료"
     else:
         st["stop_before_tp1"] += 1
-        label = "🛑 TP1 도달 전 손절"
+        label = "🛑 TP1 미달 전 손절가(SL) 터치"
+    
+    side_kr = "롱 (LONG)" if p["side"] == "LONG" else "숏 (SHORT)"
     msg = (
-        "🏁 <b>GOLD SIGNAL 종료</b>\n"
+        "🏁 <b>골드 시그널 포지션 종료</b>\n"
         "━━━━━━━━━━━━━━\n"
-        f"{label}\n방향: {p['side']}\n"
+        f"{label}\n"
+        f"진입 방향: {side_kr}\n"
         f"기준 진입가: {p['entry']:.2f}\n"
-        f"종료 기준가: {price:.2f}\n"
-        f"종료 사유: {reason}\n시각: {stamp()}"
+        f"청산 기준가: {price:.2f}\n"
+        f"종료 사유: {reason}\n"
+        f"처리 시각: {stamp()}"
     )
     s["status"] = "IDLE"
     s["position"] = None
@@ -296,9 +308,12 @@ def monitor(s):
         hit = hi >= target if side == "LONG" else lo <= target
         if not p[flag] and hit:
             p[flag] = True
+            side_kr = "롱 (LONG)" if side == "LONG" else "숏 (SHORT)"
             queue(s, f"TP{n}-{p['id']}",
-                f"🎯 <b>GOLD TP{n} 도달</b>\n방향: {side}\n목표가: <b>{target:.2f}</b>\n"
-                "시그널은 아직 종료되지 않았습니다.", f"TP{n}")
+                f"🎯 <b>골드 목표가 TP{n} 도달!</b>\n"
+                f"진입 방향: {side_kr}\n"
+                f"달성 목표가: <b>{target:.2f}</b>\n"
+                "포지션이 유지 중이며 다음 목표를 향해 진행합니다.", f"TP{n}")
             if n in (1, 2):
                 p["sl"] = max(p["sl"], p["entry"]) if side == "LONG" else min(p["sl"], p["entry"])
             if n == 3:
@@ -308,11 +323,11 @@ def monitor(s):
     save(s)
 
 def main():
-    print(f"GOLD SMART SIGNAL BOT V{VERSION} | {stamp()}", flush=True)
+    print(f"골드 스마트 시그널 봇 V{VERSION} | {stamp()}", flush=True)
     s = load_state()
     flush(s)
     if s["pending_alerts"]:
-        print("알림 대기 중: Telegram 설정/네트워크 확인 필요")
+        print("알림 대기 중: 텔레그램 설정 및 네트워크 확인 필요")
         return
     if s["status"] == "ACTIVE" and s.get("position"):
         monitor(s)
@@ -321,23 +336,23 @@ def main():
     if s.get("cooldown_until"):
         try:
             if now() < datetime.fromisoformat(s["cooldown_until"]):
-                print("Cooldown active", flush=True)
+                print("쿨다운 대기 중", flush=True)
                 return
         except ValueError:
             log("invalid_cooldown", value=s["cooldown_until"])
 
     direction, info = get_signal()
     print(
-        f"Price={info['price']:.2f} RSI={info['rsi']:.1f} "
+        f"가격={info['price']:.2f} RSI={info['rsi']:.1f} "
         f"ATR={info['atr']:.2f} ADX={info['adx']:.1f}", flush=True
     )
-    print(f"Signal: {direction} scores: LONG={info['long_score']} SHORT={info['short_score']}", flush=True)
+    print(f"신호: {direction} 점수: 롱={info['long_score']} 숏={info['short_score']}", flush=True)
     if not direction:
         log("no_signal", **info)
         save(s)
         return
     if s.get("last_signal_bar") == info["bar"]:
-        print("Duplicate signal bar ignored", flush=True)
+        print("중복 시그널 바 무시됨", flush=True)
         return
 
     entry = info["price"]
@@ -358,12 +373,12 @@ def main():
     save(s)
     queue(s, f"ENTRY-{p['id']}", entry_message(p, info), "ENTRY")
     flush(s)
-    print("Entry state saved; alert queue processed.", flush=True)
+    print("진입 상태 저장 완료; 텔레그램 알림 큐 처리 완료.", flush=True)
 
 if __name__ == "__main__":
     try:
         main()
     except Exception as e:
-        print(f"FATAL ERROR: {type(e).__name__}: {e}", flush=True)
+        print(f"치명적 오류 발생: {type(e).__name__}: {e}", flush=True)
         log("fatal_error", error=f"{type(e).__name__}: {e}")
         raise
