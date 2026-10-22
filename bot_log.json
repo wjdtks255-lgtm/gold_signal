@@ -1683,5 +1683,17 @@
     "type": "EXIT",
     "price": 4180.2998046875,
     "reason": "SL"
+  },
+  {
+    "time": "2026-10-22T11:45:04+09:00",
+    "event": "alert_queued",
+    "key": "ENTRY-1792637104",
+    "alert_type": "ENTRY"
+  },
+  {
+    "time": "2026-10-22T11:45:05+09:00",
+    "event": "alert_sent",
+    "key": "ENTRY-1792637104",
+    "alert_type": "ENTRY"
   }
 ]
