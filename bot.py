@@ -12,7 +12,7 @@ import numpy as np
 import pandas as pd
 import yfinance as yf
 
-V = '15.0.0'
+V = '15.1.0'
 TZ = ZoneInfo('Asia/Seoul')
 SYMBOL = 'GC=F'
 TV = 'https://www.tradingview.com/symbols/GC1!/'
@@ -112,7 +112,11 @@ def blank():
         'last_signal_bar': None,
         'cooldown_until': None,
         'pending_alerts': [],
-        'sent_event_keys': []
+        'sent_event_keys': [],
+        'tp3_count': 0,
+        'tp2_count': 0,
+        'tp1_count': 0,
+        'loss_count': 0
     }
 
 def valid_state(s):
@@ -144,6 +148,31 @@ def flush(s):
             left.append(a)
     s['pending_alerts'] = left
     write(SF, s)
+
+def send_performance_report(state: Dict[str, Any]) -> None:
+    tp3 = state.get('tp3_count', 0)
+    tp2 = state.get('tp2_count', 0)
+    tp1 = state.get('tp1_count', 0)
+    losses = state.get('loss_count', 0)
+    
+    total = tp3 + tp2 + tp1 + losses
+    success_count = tp3 + tp2 + tp1
+    success_rate = (success_count / total * 100) if total > 0 else 0.0
+    
+    report_text = (
+        f"📊 <b>시그널 누적 성과 통계</b>\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"  • 총 종료 시그널: <code>{total}건</code>\n"
+        f"  • 🎯 TP3 종료: <code>{tp3}건</code>\n"
+        f"  • 🎯 TP2 종료: <code>{tp2}건</code>\n"
+        f"  • 🎯 TP1 종료: <code>{tp1}건</code>\n"
+        f"  • 🔴 손절 종료: <code>{losses}건</code>\n\n"
+        f"🏆 <b>최종 승률</b>\n"
+        f"<b>{success_rate:.1f}%</b>\n"
+        f"승리 {success_count}건 · 손절 {losses}건\n"
+        f"⏱️ <code>{ts()} (KST)</code>"
+    )
+    send(report_text)
 
 def bars(period, interval):
     d = yf.Ticker(SYMBOL).history(period=period, interval=interval, auto_adjust=False, actions=False)
@@ -264,21 +293,36 @@ def monitor(s, price, m5):
         if price <= tp2 and not p['tp2_hit']: hits.append('TP2')
         if price <= tp3: hits.append('TP3')
         
+    # SL 도달 시 최종 종료 판정 (어디까지 도달했었느냐에 따라 TP1/TP2 종료 또는 손절 종료 분기)
     if 'SL' in hits:
+        if p.get('tp3_hit'):
+            s['tp3_count'] = s.get('tp3_count', 0) + 1
+            exit_type = 'TP3 종료'
+        elif p.get('tp2_hit'):
+            s['tp2_count'] = s.get('tp2_count', 0) + 1
+            exit_type = 'TP2 종료'
+        elif p.get('tp1_hit'):
+            s['tp1_count'] = s.get('tp1_count', 0) + 1
+            exit_type = 'TP1 종료'
+        else:
+            s['loss_count'] = s.get('loss_count', 0) + 1
+            exit_type = '손절 종료'
+
         msg = (
-            f"🛑 <b>GOLD V15 | 모의 손절 종료</b>\n"
+            f"🛑 <b>GOLD V15 | 시그널 최종 종료 ({exit_type})</b>\n"
             f"{d} · 기준가 {money(p['entry'])}\n"
-            f"체크 가격 {money(price)} · SL {money(sl)}\n"
-            f"5분 체크 간격으로 실제 도달 순서를 알 수 없어 보수적으로 처리했습니다.\n"
+            f"체크 가격 {money(price)} · 최종 손절/방어선 {money(sl)}\n"
             f"🧪 모의 신호 · {ts()}\n"
             f"<a href='{TV}'>TradingView GC1! 차트</a>"
         )
         queue(s, key('SL', p), msg, 'SL')
-        log('exit', reason='SL', price=price, position=p)
+        log('exit', reason=exit_type, price=price, position=p)
+        
         s['status'] = 'IDLE'
         s['position'] = None
         s['cooldown_until'] = (now() + timedelta(minutes=30)).isoformat()
         write(SF, s)
+        send_performance_report(s)
         return
         
     for target in ('TP1', 'TP2'):
@@ -317,8 +361,10 @@ def monitor(s, price, m5):
         queue(s, key(target, p), text, target)
         
     if 'TP3' in hits:
+        p['tp3_hit'] = True
+        s['tp3_count'] = s.get('tp3_count', 0) + 1
         text = (
-            f"🏁 <b>GOLD V15 | TP3 모의 종료</b>\n"
+            f"🏁 <b>GOLD V15 | TP3 최종 익절 달성 (TP3 종료)</b>\n"
             f"{d} · 진입 {money(p['entry'])} · TP3 {money(tp3)}\n"
             f"체크 가격 {money(price)}\n"
             f"포지션 잠금 해제. 실제 체결 아님.\n"
@@ -330,9 +376,11 @@ def monitor(s, price, m5):
         s['status'] = 'IDLE'
         s['position'] = None
         s['cooldown_until'] = (now() + timedelta(minutes=10)).isoformat()
+        write(SF, s)
+        send_performance_report(s)
     else:
         s['position'] = p
-    write(SF, s)
+        write(SF, s)
 
 def main():
     print(f'GOLD SMART SIGNAL BOT V{V} PAPER ONLY | {ts()}')
@@ -403,6 +451,7 @@ def main():
         'entry_bar': info['bar'],
         'tp1_hit': False,
         'tp2_hit': False,
+        'tp3_hit': False,
         'score': info['scores'][direction],
         'entry_info': info
     }
