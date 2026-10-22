@@ -1911,5 +1911,17 @@
     "event": "alert_sent",
     "key": "TP1-1792680636",
     "alert_type": "TP1"
+  },
+  {
+    "time": "2026-10-23T02:00:54+09:00",
+    "event": "alert_queued",
+    "key": "TP2-1792680636",
+    "alert_type": "TP2"
+  },
+  {
+    "time": "2026-10-23T02:00:56+09:00",
+    "event": "alert_sent",
+    "key": "TP2-1792680636",
+    "alert_type": "TP2"
   }
 ]
