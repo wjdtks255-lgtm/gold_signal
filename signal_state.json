@@ -4,6 +4,59 @@
   "wins": 2,
   "losses": 4,
   "breakevens": 1,
-  "position": null,
-  "last_loss_time": 1792626338.881256
+  "position": {
+    "id": "SHORT-20261022095030",
+    "direction": "SHORT",
+    "entry": 4132.39990234375,
+    "sl": 4136.141036547741,
+    "initial_sl": 4136.141036547741,
+    "tp1": 4127.910541298961,
+    "tp2": 4124.917633935768,
+    "tp3": 4121.176499731777,
+    "risk": 3.7411342039909417,
+    "entry_time": "2026-10-22T09:50:30+09:00",
+    "entry_bar": "2026-10-21 20:35:00-04:00",
+    "tp1_hit": false,
+    "tp2_hit": false,
+    "score": 8,
+    "entry_info": {
+      "scores": {
+        "LONG": 1,
+        "SHORT": 8
+      },
+      "checks": {
+        "h1L": false,
+        "h1S": true,
+        "m15L": false,
+        "m15S": true,
+        "m5L": false,
+        "m5S": true,
+        "candleL": false,
+        "candleS": false,
+        "adx": true,
+        "rsiL": false,
+        "rsiS": true
+      },
+      "price": 4132.39990234375,
+      "atr": 3.2531601773834278,
+      "rsi": 30.59711726590818,
+      "adx": 34.20208820273516,
+      "bar": "2026-10-21 20:35:00-04:00"
+    }
+  },
+  "last_loss_time": 1792626338.881256,
+  "version": "15.0.0",
+  "status": "ACTIVE",
+  "last_signal_bar": "2026-10-21 20:35:00-04:00",
+  "cooldown_until": null,
+  "pending_alerts": [
+    {
+      "key": "ENTRY:SHORT-20261022095030",
+      "message": "🏆 <b>GOLD SMART SIGNAL V15 | PAPER</b>\n🔴 <b>SHORT 진입 신호</b>\n━━━━━━━━━━━━\n📍 기준가 <b>$4,132.40</b>\n🛑 SL $4,136.14\n🎯 TP1 $4,127.91\n🎯 TP2 $4,124.92\n🏁 TP3 $4,121.18\n━━━━━━━━━━━━\n점수 LONG 1/9 · SHORT 8/9\nRSI 30.6 | ADX 34.2 | ATR 3.25\n근거: H1·M15 추세 정렬 + M5 모멘텀 확인\n🔒 TP3 또는 SL까지 신규 진입 차단\n🧪 모의 신호(실제 주문 아님) · 2026-10-22T09:50:30+09:00\n<a href='https://www.tradingview.com/symbols/GC1!/'>TradingView GC1! 차트</a>",
+      "event": "ENTRY"
+    }
+  ],
+  "sent_event_keys": [
+    "ENTRY:SHORT-20261022095030"
+  ]
 }
