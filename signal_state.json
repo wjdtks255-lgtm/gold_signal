@@ -1,8 +1,21 @@
 {
   "version": "15.3.1",
-  "status": "IDLE",
-  "position": null,
-  "last_signal_bar": "2026-10-22 03:30:00-04:00",
+  "status": "ACTIVE",
+  "position": {
+    "id": "1792672242",
+    "side": "SHORT",
+    "entry": 4085.10009765625,
+    "sl": 4092.681404953677,
+    "tp1": 4076.0025288993374,
+    "tp2": 4069.937483061396,
+    "tp3": 4062.356175763969,
+    "tp1_hit": false,
+    "tp2_hit": false,
+    "tp3_hit": false,
+    "entry_time": "2026-10-22T21:30:42+09:00",
+    "entry_bar": "2026-10-22 08:15:00-04:00"
+  },
+  "last_signal_bar": "2026-10-22 08:15:00-04:00",
   "cooldown_until": "2026-10-22T21:20:40.470407+09:00",
   "pending_alerts": [],
   "sent_event_keys": [
@@ -15,7 +28,8 @@
     "ENTRY-1792655350",
     "TP1-1792655350",
     "EXIT-1792655350",
-    "STATS-1792655350"
+    "STATS-1792655350",
+    "ENTRY-1792672242"
   ],
   "stats": {
     "tp3": 1,
