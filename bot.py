@@ -1,48 +1,35 @@
-import os,json,time,tempfile,math
+import os,json,time,tempfile
 from pathlib import Path
 from datetime import datetime,timedelta
 from zoneinfo import ZoneInfo
 import requests,numpy as np,pandas as pd,yfinance as yf
 
-V='15.2.0'
-TZ=ZoneInfo('Asia/Seoul')
-SYMBOL='GC=F'
-TV='https://www.tradingview.com/symbols/GC1!/'
-SF=Path('signal_state.json')
-LF=Path('bot_log.json')
-TOKEN=os.getenv('TELEGRAM_TOKEN','').strip()
-CHAT=(os.getenv('TELEGRAM_CHAT_ID') or os.getenv('CHAT_ID') or '').strip()
+VERSION="15.3.0"
+TZ=ZoneInfo("Asia/Seoul")
+SYMBOL="GC=F"
+TV="https://www.tradingview.com/symbols/GC1!/"
+STATE=Path("signal_state.json")
+LOG=Path("bot_log.json")
+TOKEN=os.getenv("TELEGRAM_TOKEN","").strip()
+CHAT=(os.getenv("TELEGRAM_CHAT_ID") or os.getenv("CHAT_ID") or "").strip()
+
+TP1_R,TP2_R,TP3_R=1.2,2.0,3.0
+COOLDOWN_MIN=60
+SL_COOLDOWN_MIN=120
+MAX_LOGS=500
 
 def now():
     return datetime.now(TZ)
 
-def ts():
-    return now().isoformat(timespec='seconds')
+def stamp():
+    return now().isoformat(timespec="seconds")
 
-def safe(x):
-    if isinstance(x,dict):
-        return {str(k):safe(v) for k,v in x.items()}
-    if isinstance(x,(list,tuple)):
-        return [safe(v) for v in x]
-    if isinstance(x,np.integer):
-        return int(x)
-    if isinstance(x,np.floating):
-        return None if not np.isfinite(x) else float(x)
-    if isinstance(x,np.bool_):
-        return bool(x)
-    if isinstance(x,(pd.Timestamp,datetime)):
-        return x.isoformat()
-    if isinstance(x,float) and not math.isfinite(x):
-        return None
-    return x
-
-def write(path,obj):
-    path=Path(path)
+def write(path,data):
     path.parent.mkdir(parents=True,exist_ok=True)
-    fd,tmp=tempfile.mkstemp(dir=path.parent,prefix=path.name+'.',suffix='.tmp')
+    fd,tmp=tempfile.mkstemp(dir=str(path.parent),prefix=path.name)
     try:
-        with os.fdopen(fd,'w',encoding='utf-8') as f:
-            json.dump(safe(obj),f,ensure_ascii=False,indent=2,allow_nan=False)
+        with os.fdopen(fd,"w",encoding="utf-8") as f:
+            json.dump(data,f,ensure_ascii=False,indent=2)
             f.flush()
             os.fsync(f.fileno())
         os.replace(tmp,path)
@@ -51,588 +38,360 @@ def write(path,obj):
             os.remove(tmp)
 
 def read(path,default):
-    if not Path(path).exists():
+    if not path.exists():
         return default
     try:
-        with open(path,encoding='utf-8') as f:
+        with path.open(encoding="utf-8") as f:
             return json.load(f)
     except Exception as e:
-        backup=Path(str(path)+'.corrupt-'+now().strftime('%Y%m%d-%H%M%S'))
-        try:
-            Path(path).replace(backup)
-        except Exception:
-            pass
-        if str(path)==str(SF):
-            raise RuntimeError(
-                f'{path} 손상. 백업={backup}; 상태 확인 전 신규 진입 중단'
-            ) from e
-        print('Log read error:',e)
-        return default
+        raise RuntimeError(f"{path} 파일을 읽을 수 없습니다. 초기화하지 않고 중단합니다: {e}")
 
-def log(event,**kw):
-    a=read(LF,[])
-    if not isinstance(a,list):
-        a=[]
-    a.append({'time':ts(),'event':event,**safe(kw)})
-    write(LF,a[-500:])
-
-def send(msg):
-    if not TOKEN or not CHAT:
-        print('Telegram 설정 누락: TELEGRAM_TOKEN / TELEGRAM_CHAT_ID')
-        return False
-    for i in range(3):
-        try:
-            r=requests.post(
-                f'https://api.telegram.org/bot{TOKEN}/sendMessage',
-                json={
-                    'chat_id':CHAT,
-                    'text':msg,
-                    'parse_mode':'HTML',
-                    'disable_web_page_preview':True
-                },
-                timeout=15
-            )
-            if r.ok and r.json().get('ok'):
-                return True
-            print('Telegram error:',r.status_code,r.text[:200])
-            if 400<=r.status_code<500:
-                return False
-        except Exception as e:
-            print('Telegram attempt',i+1,e)
-        time.sleep(1+i)
-    return False
+def log(event,**kwargs):
+    try:
+        rows=read(LOG,[])
+        if not isinstance(rows,list):
+            rows=[]
+        rows.append({"time":stamp(),"event":event,**kwargs})
+        write(LOG,rows[-MAX_LOGS:])
+    except Exception as e:
+        print(f"LOG WARNING: {e}",flush=True)
 
 def blank():
     return {
-        'version':V,
-        'status':'IDLE',
-        'position':None,
-        'last_signal_bar':None,
-        'cooldown_until':None,
-        'pending_alerts':[],
-        'sent_event_keys':[],
-        'stats':{
-            'tp3':0,
-            'stop_after_tp2':0,
-            'stop_after_tp1':0,
-            'stop_before_tp1':0
-        }
+        "version":VERSION,"status":"IDLE","position":None,
+        "last_signal_bar":None,"cooldown_until":None,
+        "pending_alerts":[],"sent_event_keys":[],
+        "stats":{"tp3":0,"stop_after_tp2":0,
+                 "stop_after_tp1":0,"stop_before_tp1":0}
     }
 
-def valid_state(s):
-    if not isinstance(s,dict):
-        raise RuntimeError('signal_state.json은 JSON 객체여야 합니다.')
-    defaults=blank()
-    for k,v in defaults.items():
-        s.setdefault(k,v)
-    if s.get('status') not in ('IDLE','ACTIVE'):
-        raise RuntimeError('잘못된 상태입니다. 신규 진입을 중단합니다.')
-    if s['status']=='ACTIVE' and not isinstance(s.get('position'),dict):
-        raise RuntimeError('ACTIVE 상태인데 포지션이 없습니다. 수동 복구가 필요합니다.')
-    if not isinstance(s.get('pending_alerts'),list):
-        raise RuntimeError('pending_alerts 데이터가 잘못되었습니다.')
+def load_state():
+    if not STATE.exists():
+        return blank()
+    s=read(STATE,None)
+    if not isinstance(s,dict) or "status" not in s or "stats" not in s:
+        raise RuntimeError("상태 파일 구조가 올바르지 않습니다. 자동 초기화하지 않습니다.")
+    s.setdefault("pending_alerts",[])
+    s.setdefault("sent_event_keys",[])
+    s.setdefault("position",None)
+    s.setdefault("cooldown_until",None)
+    s.setdefault("last_signal_bar",None)
+    for k in ("tp3","stop_after_tp2","stop_after_tp1","stop_before_tp1"):
+        s["stats"].setdefault(k,0)
     return s
 
-def queue(s,event_key,msg,event):
-    if event_key in s['sent_event_keys']:
+def save(s):
+    s["version"]=VERSION
+    write(STATE,s)
+
+def telegram(text):
+    if not TOKEN or not CHAT:
+        raise RuntimeError("TELEGRAM_TOKEN 또는 TELEGRAM_CHAT_ID Secret이 없습니다.")
+    r=requests.post(
+        f"https://api.telegram.org/bot{TOKEN}/sendMessage",
+        data={"chat_id":CHAT,"text":text,"parse_mode":"HTML",
+              "disable_web_page_preview":True},
+        timeout=20
+    )
+    r.raise_for_status()
+    j=r.json()
+    if not j.get("ok"):
+        raise RuntimeError(f"Telegram 전송 실패: {j}")
+    return True
+
+def queue(s,event_key,message,event_type):
+    if event_key in s["sent_event_keys"]:
         return
-    s['sent_event_keys']=(s['sent_event_keys']+[event_key])[-500:]
-    s['pending_alerts'].append({
-        'key':event_key,
-        'message':msg,
-        'event':event
+    if any(x.get("key")==event_key for x in s["pending_alerts"]):
+        return
+    s["pending_alerts"].append({
+        "key":event_key,"message":message,"type":event_type
     })
-    s['pending_alerts']=s['pending_alerts'][-50:]
-    write(SF,s)
-    log('alert_queued',key=event_key,event=event)
+    log("alert_queued",key=event_key,alert_type=event_type)
+    save(s)
 
 def flush(s):
-    pending=[]
-    for a in s.get('pending_alerts',[]):
-        ok=send(a['message'])
-        log('telegram_sent' if ok else 'telegram_failed',
-            key=a['key'],event=a['event'])
-        if not ok:
-            pending.append(a)
-    s['pending_alerts']=pending
-    write(SF,s)
+    while s["pending_alerts"]:
+        item=s["pending_alerts"][0]
+        try:
+            telegram(item["message"])
+        except Exception as e:
+            log("telegram_error",error=str(e),key=item.get("key"))
+            print(f"TELEGRAM ERROR: {e}",flush=True)
+            save(s)
+            return
+        s["sent_event_keys"].append(item["key"])
+        s["sent_event_keys"]=s["sent_event_keys"][-1000:]
+        s["pending_alerts"].pop(0)
+        log("alert_sent",key=item["key"],alert_type=item.get("type"))
+        save(s)
 
-def queue_stats(s):
-    st=s.setdefault('stats',{})
-    keys=('tp3','stop_after_tp2','stop_after_tp1','stop_before_tp1')
-    total=sum(int(st.get(k,0)) for k in keys)
-    tp3=int(st.get('tp3',0))
-    rate=100*tp3/total if total else 0
-    msg=(
-        '📊 <b>GOLD SMART SIGNAL V15.2 종료 통계</b>\n'
-        '━━━━━━━━━━━━\n'
-        f'총 종료 시그널: <code>{total}</code>\n'
-        f'TP3 최종 도달: <code>{tp3}</code>\n'
-        f'TP2 도달 후 보호 SL: <code>{st.get("stop_after_tp2",0)}</code>\n'
-        f'TP1 도달 후 보호 SL: <code>{st.get("stop_after_tp1",0)}</code>\n'
-        f'TP1 전 SL: <code>{st.get("stop_before_tp1",0)}</code>\n'
-        f'TP3 기준 승률: <b>{rate:.1f}%</b>\n'
-        '※ TP1·TP2는 중간 도달이며 최종 종료가 아닙니다.\n'
-        f'🕒 {ts()}'
+def stats_message(s):
+    st=s["stats"]
+    total=sum(st.get(k,0) for k in (
+        "tp3","stop_after_tp2","stop_after_tp1","stop_before_tp1"
+    ))
+    wins=st.get("tp3",0)
+    rate=100*wins/total if total else 0
+    return (
+        "📊 <b>골드 시그널 종료 통계</b>\n"
+        "━━━━━━━━━━━━━━\n"
+        f"총 종료 시그널: <b>{total}</b>\n"
+        f"TP3 최종 도달: {st.get('tp3',0)}\n"
+        f"TP2 도달 후 스탑 종료: {st.get('stop_after_tp2',0)}\n"
+        f"TP1 도달 후 스탑 종료: {st.get('stop_after_tp1',0)}\n"
+        f"TP1 전 손절: {st.get('stop_before_tp1',0)}\n"
+        f"TP3 기준 승률: <b>{rate:.1f}%</b>\n"
+        "━━━━━━━━━━━━━━\n"
+        "<i>승률은 TP3 최종 도달 건수 ÷ 전체 종료 건수입니다.</i>"
     )
-    queue(s,'STATS:'+str(total)+':'+str(st),msg,'STATS')
 
-def bars(period,interval):
-    d=yf.Ticker(SYMBOL).history(
-        period=period,
-        interval=interval,
-        auto_adjust=False,
-        actions=False
+def get_bars(interval,period):
+    df=yf.download(
+        SYMBOL,interval=interval,period=period,
+        auto_adjust=False,progress=False,threads=False
     )
-    if d is None or d.empty:
-        return pd.DataFrame()
-    d=d.rename(columns={c:c.lower() for c in d.columns})
-    d=d[~d.index.duplicated(keep='last')].sort_index()
-    # 진행 중인 마지막 캔들은 제외
-    if len(d)>2:
-        d=d.iloc[:-1].copy()
-    return d.dropna(subset=['open','high','low','close'])
+    if df is None or df.empty:
+        raise RuntimeError(f"Yahoo Finance 데이터 없음: {interval}")
+    if isinstance(df.columns,pd.MultiIndex):
+        df.columns=df.columns.get_level_values(0)
+    df.columns=[str(c).lower() for c in df.columns]
+    needed=["open","high","low","close","volume"]
+    if any(c not in df.columns for c in needed):
+        raise RuntimeError(f"{interval} 데이터 열이 부족합니다: {list(df.columns)}")
+    df=df[needed].dropna().copy()
+    if len(df)<60:
+        raise RuntimeError(f"{interval} 데이터 부족: {len(df)}개")
+    # 최신 진행 중 캔들은 분석에서 제외
+    return df.iloc[:-1].copy()
 
-def indic(d):
-    if d.empty:
-        return d
-    d=d.copy()
+def indicators(df):
+    d=df.copy()
     c,h,l=d.close,d.high,d.low
-    d['ema20']=c.ewm(span=20,adjust=False).mean()
-    d['ema50']=c.ewm(span=50,adjust=False).mean()
-
+    d["ema20"]=c.ewm(span=20,adjust=False).mean()
+    d["ema50"]=c.ewm(span=50,adjust=False).mean()
     delta=c.diff()
-    gain=delta.clip(lower=0).ewm(
-        alpha=1/14,adjust=False,min_periods=14
-    ).mean()
-    loss=(-delta.clip(upper=0)).ewm(
-        alpha=1/14,adjust=False,min_periods=14
-    ).mean()
-    d['rsi']=100-100/(1+gain/loss.replace(0,np.nan))
-
-    prev=c.shift()
-    tr=pd.concat([
-        h-l,(h-prev).abs(),(l-prev).abs()
-    ],axis=1).max(axis=1)
-    d['atr']=tr.ewm(
-        alpha=1/14,adjust=False,min_periods=14
-    ).mean()
-
-    up,down=h.diff(),-l.diff()
-    plus=up.where((up>down)&(up>0),0.)
-    minus=down.where((down>up)&(down>0),0.)
-    a=d.atr.replace(0,np.nan)
-    pdi=100*plus.ewm(
-        alpha=1/14,adjust=False,min_periods=14
-    ).mean()/a
-    mdi=100*minus.ewm(
-        alpha=1/14,adjust=False,min_periods=14
-    ).mean()/a
+    gain=delta.clip(lower=0).ewm(alpha=1/14,adjust=False).mean()
+    loss=(-delta.clip(upper=0)).ewm(alpha=1/14,adjust=False).mean()
+    rs=gain/loss.replace(0,np.nan)
+    d["rsi"]=100-(100/(1+rs))
+    tr=pd.concat([h-l,(h-c.shift()).abs(),(l-c.shift()).abs()],axis=1).max(axis=1)
+    d["atr"]=tr.ewm(alpha=1/14,adjust=False).mean()
+    up=h.diff()
+    down=-l.diff()
+    plus=pd.Series(np.where((up>down)&(up>0),up,0),index=d.index)
+    minus=pd.Series(np.where((down>up)&(down>0),down,0),index=d.index)
+    atr=d["atr"].replace(0,np.nan)
+    pdi=100*plus.ewm(alpha=1/14,adjust=False).mean()/atr
+    mdi=100*minus.ewm(alpha=1/14,adjust=False).mean()/atr
     dx=100*(pdi-mdi).abs()/(pdi+mdi).replace(0,np.nan)
-    d['adx']=dx.ewm(
-        alpha=1/14,adjust=False,min_periods=14
-    ).mean()
-    d['pdi']=pdi
-    d['mdi']=mdi
+    d["pdi"],d["mdi"]=pdi,mdi
+    d["adx"]=dx.ewm(alpha=1/14,adjust=False).mean()
+    d["body"]=((c-d.open).abs()/(h-l).replace(0,np.nan)).fillna(0)
+    d["closepos"]=((c-l)/(h-l).replace(0,np.nan)).fillna(.5)
+    return d.replace([np.inf,-np.inf],np.nan).dropna()
 
-    spread=(h-l).replace(0,np.nan)
-    d['body']=(c-d.open).abs()/spread
-    d['cpos']=(c-l)/spread
-    return d
+def get_signal():
+    h1=indicators(get_bars("1h","60d"))
+    m15=indicators(get_bars("15m","30d"))
+    m5=indicators(get_bars("5m","10d"))
+    h,m,b=h1.iloc[-1],m15.iloc[-1],m5.iloc[-1]
+    prev=m15.iloc[-2]
+    price=float(b.close)
+    atr=float(b.atr)
+    if not np.isfinite(atr) or atr<=0:
+        raise RuntimeError("ATR 값이 유효하지 않습니다.")
 
-def last(d):
-    if d.empty:
-        return None
-    r=d.iloc[-1]
-    keys=[
-        'close','open','high','low','ema20','ema50',
-        'rsi','atr','adx','pdi','mdi','body','cpos'
-    ]
-    if any(k not in r or pd.isna(r[k]) for k in keys):
-        return None
-    return r
-
-def signal(h,m15,m5):
-    # H1 방향 + M15 눌림목 회복 + M5 진입 트리거
-    a,b,c=last(h),last(m15),last(m5)
-    if any(x is None for x in (a,b,c)):
-        return None,{'reason':'indicator_warmup'}
-    if min(len(h),len(m15),len(m5))<60:
-        return None,{'reason':'insufficient_bars'}
-
-    hp=h.iloc[-2]
-    mp=m15.iloc[-2]
-    cp=m5.iloc[-2]
-
-    # 상위 시간봉 추세 및 기울기
-    h1_up=(
-        a.close>a.ema20>a.ema50
-        and a.ema20>hp.ema20
-    )
-    h1_dn=(
-        a.close<a.ema20<a.ema50
-        and a.ema20<hp.ema20
-    )
-    m15_up=(
-        b.close>b.ema20>b.ema50
-        and b.ema20>mp.ema20
-    )
-    m15_dn=(
-        b.close<b.ema20<b.ema50
-        and b.ema20<mp.ema20
-    )
-
-    # 이전 15분봉이 EMA20 근처까지 눌린 후 추세 방향으로 회복
-    pull_l=(
-        mp.low<=mp.ema20+0.25*b.atr
-        and b.close>b.ema20
-        and b.close>=mp.close
-    )
-    pull_s=(
-        mp.high>=mp.ema20-0.25*b.atr
-        and b.close<b.ema20
-        and b.close<=mp.close
-    )
-
-    # 5분봉 직전 고점/저점 돌파 또는 강한 방향성 캔들
-    brk_l=c.close>cp.high and c.close>c.open
-    brk_s=c.close<cp.low and c.close<c.open
-    candle_l=c.cpos>=0.68 and c.body>=0.30 and c.close>c.open
-    candle_s=c.cpos<=0.32 and c.body>=0.30 and c.close<c.open
-
-    m5_l=(
-        c.close>c.ema20
-        and c.rsi>=50
-        and c.pdi>c.mdi
-        and (brk_l or candle_l)
-    )
-    m5_s=(
-        c.close<c.ema20
-        and c.rsi<=50
-        and c.mdi>c.pdi
-        and (brk_s or candle_s)
-    )
-
-    adx_ok=c.adx>=13 and b.adx>=11
-    rsi_l=48<=c.rsi<=70
-    rsi_s=30<=c.rsi<=52
-    dist=abs(float(c.close)-float(c.ema20))/max(float(c.atr),1e-9)
-    no_chase=dist<=1.35
-
-    checks={
-        'h1L':bool(h1_up),'h1S':bool(h1_dn),
-        'm15L':bool(m15_up),'m15S':bool(m15_dn),
-        'pullL':bool(pull_l),'pullS':bool(pull_s),
-        'm5L':bool(m5_l),'m5S':bool(m5_s),
-        'candleL':bool(candle_l),'candleS':bool(candle_s),
-        'adx':bool(adx_ok),'rsiL':bool(rsi_l),'rsiS':bool(rsi_s),
-        'noChase':bool(no_chase),
-        'breakL':bool(brk_l),'breakS':bool(brk_s)
-    }
-
-    scores={
-        'LONG':(
-            2*checks['h1L']+2*checks['m15L']+
-            2*checks['pullL']+2*checks['m5L']+
-            checks['adx']+checks['rsiL']+checks['noChase']
-        ),
-        'SHORT':(
-            2*checks['h1S']+2*checks['m15S']+
-            2*checks['pullS']+2*checks['m5S']+
-            checks['adx']+checks['rsiS']+checks['noChase']
-        )
-    }
+    long_score=0
+    short_score=0
+    long_score+=2 if h.ema20>h.ema50 else 0
+    short_score+=2 if h.ema20<h.ema50 else 0
+    long_score+=2 if m.ema20>m.ema50 else 0
+    short_score+=2 if m.ema20<m.ema50 else 0
+    long_score+=1 if m.close>m.ema20 and prev.close<=prev.ema20*1.003 else 0
+    short_score+=1 if m.close<m.ema20 and prev.close>=prev.ema20*.997 else 0
+    long_score+=1 if b.close>b.open and b.closepos>.65 else 0
+    short_score+=1 if b.close<b.open and b.closepos<.35 else 0
+    long_score+=1 if b.pdi>b.mdi else 0
+    short_score+=1 if b.mdi>b.pdi else 0
+    long_score+=1 if 38<=b.rsi<=68 else 0
+    short_score+=1 if 30<=b.rsi<=62 else 0
 
     direction=None
-    if (
-        h1_up and m15_up and pull_l and m5_l
-        and adx_ok and rsi_l and no_chase
-        and scores['LONG']>=10
-    ):
-        direction='LONG'
-    elif (
-        h1_dn and m15_dn and pull_s and m5_s
-        and adx_ok and rsi_s and no_chase
-        and scores['SHORT']>=10
-    ):
-        direction='SHORT'
+    score=max(long_score,short_score)
+    if long_score>=6 and long_score>short_score and h.ema20>h.ema50:
+        direction="LONG"
+    elif short_score>=6 and short_score>long_score and h.ema20<h.ema50:
+        direction="SHORT"
 
-    return direction,{
-        'scores':scores,'checks':checks,
-        'price':float(c.close),'atr':float(c.atr),
-        'rsi':float(c.rsi),'adx':float(c.adx),
-        'bar':str(m5.index[-1]),
-        'distance_atr':round(dist,2),
-        'reason':'trend_pullback_trigger' if direction else 'filters_not_aligned'
+    info={
+        "price":price,"atr":atr,"rsi":float(b.rsi),
+        "adx":float(b.adx),"long_score":int(long_score),
+        "short_score":int(short_score),"score":int(score),
+        "bar":str(m5.index[-1])
     }
+    if direction and (b.adx<14 or abs(price-float(b.ema20))>1.5*atr):
+        direction=None
+    return direction,info
 
-def money(x):
-    return f'${float(x):,.2f}'
-
-def key(kind,p):
-    return f"{kind}:{p['id']}"
-
-def entry_msg(p,info):
-    direction=p['direction']
-    emoji='🟢' if direction=='LONG' else '🔴'
+def entry_message(p,info):
+    side="🟢 LONG 매수 관점" if p["side"]=="LONG" else "🔴 SHORT 매도 관점"
     return (
-        f"🏆 <b>GOLD SMART SIGNAL V{V} | PAPER</b>\n"
-        f"{emoji} <b>{direction} 진입 시그널</b>\n"
-        f"━━━━━━━━━━━━\n"
-        f"📍 기준가 <b>{money(p['entry'])}</b>\n"
-        f"🛑 손절 SL: {money(p['sl'])}\n"
-        f"🎯 목표 TP1: {money(p['tp1'])}\n"
-        f"🎯 목표 TP2: {money(p['tp2'])}\n"
-        f"🏁 최종 목표 TP3: {money(p['tp3'])}\n"
-        f"━━━━━━━━━━━━\n"
-        f"LONG 점수 {info['scores']['LONG']} · "
-        f"SHORT 점수 {info['scores']['SHORT']}\n"
-        f"RSI {info['rsi']:.1f} | ADX {info['adx']:.1f} | ATR {info['atr']:.2f}\n"
-        f"진입 근거: H1 추세 + M15 눌림목 + M5 돌파/반전 확인\n"
-        f"🔒 TP3 또는 SL 종료 전 신규 진입 차단\n"
-        f"🧪 모의 시그널이며 실제 주문은 실행하지 않습니다.\n"
-        f"🕒 {ts()}\n"
-        f"<a href='{TV}'>TradingView GC1! 차트</a>"
+        "🥇 <b>GOLD FUTURES SIGNAL V15.3</b>\n"
+        "━━━━━━━━━━━━━━\n"
+        f"{side}\n"
+        "🧪 <b>PAPER SIGNAL — 실제 주문 없음</b>\n"
+        f"진입 기준가: <b>{p['entry']:.2f}</b>\n"
+        f"손절가: <b>{p['sl']:.2f}</b>\n"
+        f"TP1: <b>{p['tp1']:.2f}</b>\n"
+        f"TP2: <b>{p['tp2']:.2f}</b>\n"
+        f"TP3: <b>{p['tp3']:.2f}</b>\n"
+        "━━━━━━━━━━━━━━\n"
+        f"신호 점수: {info['score']} | RSI: {info['rsi']:.1f}\n"
+        f"ADX: {info['adx']:.1f} | ATR: {info['atr']:.2f}\n"
+        f"발생 시각: {stamp()}\n"
+        f'차트: <a href="{TV}">TradingView Gold</a>\n'
+        "⚠️ 가격은 데이터 제공처와 체결 가격에 따라 다를 수 있습니다."
     )
 
-def monitor(s,price,m5):
-    p=s['position']
-    d=p['direction']
-    sl,tp1,tp2,tp3=[
-        float(p[k]) for k in ('sl','tp1','tp2','tp3')
-    ]
-
-    # 5분봉의 고가/저가를 함께 확인
-    bar=m5.iloc[-1]
-    high=float(bar.high)
-    low=float(bar.low)
-    if d=='LONG':
-        sl_hit=low<=sl
-        tp1_hit=high>=tp1 and not p['tp1_hit']
-        tp2_hit=high>=tp2 and not p['tp2_hit']
-        tp3_hit=high>=tp3
+def close_position(s,p,reason,price):
+    st=s["stats"]
+    if reason=="TP3":
+        st["tp3"]+=1
+        label="🎯 TP3 최종 목표 도달"
     else:
-        sl_hit=high>=sl
-        tp1_hit=low<=tp1 and not p['tp1_hit']
-        tp2_hit=low<=tp2 and not p['tp2_hit']
-        tp3_hit=low<=tp3
+        if p["tp2_hit"]:
+            st["stop_after_tp2"]+=1
+            label="🛡 TP2 도달 후 보호 스탑 종료"
+        elif p["tp1_hit"]:
+            st["stop_after_tp1"]+=1
+            label="🛡 TP1 도달 후 보호 스탑 종료"
+        else:
+            st["stop_before_tp1"]+=1
+            label="🛑 TP1 도달 전 손절"
+    msg=(
+        "🏁 <b>GOLD SIGNAL 종료</b>\n"
+        "━━━━━━━━━━━━━━\n"
+        f"{label}\n방향: {p['side']}\n"
+        f"기준 진입가: {p['entry']:.2f}\n"
+        f"종료 기준가: {price:.2f}\n"
+        f"종료 사유: {reason}\n"
+        f"시각: {stamp()}\n"
+        "━━━━━━━━━━━━━━\n"
+        "<i>수수료·슬리피지 미반영 모의 추적입니다.</i>"
+    )
+    s["status"]="IDLE"
+    s["position"]=None
+    mins=SL_COOLDOWN_MIN if reason=="SL" else COOLDOWN_MIN
+    s["cooldown_until"]=(now()+timedelta(minutes=mins)).isoformat()
+    queue(s,f"EXIT-{p['id']}",msg,"EXIT")
+    queue(s,f"STATS-{p['id']}",stats_message(s),"STATS")
+    log("position_closed",reason=reason,side=p["side"],stats=st.copy())
+    save(s)
 
-    # 한 번의 5분봉 안에서 SL과 TP가 모두 걸렸다면 순서를 알 수 없으므로 SL 우선
+def monitor(s):
+    p=s.get("position")
+    if not p:
+        return
+    d=get_bars("5m","10d")
+    bar=d.iloc[-1]
+    hi,lo=float(bar.high),float(bar.low)
+    side=p["side"]
+    # 한 캔들에서 SL과 TP가 함께 닿으면 보수적으로 SL 우선 처리
+    sl_hit=lo<=p["sl"] if side=="LONG" else hi>=p["sl"]
     if sl_hit:
-        st=s.setdefault('stats',{
-            'tp3':0,'stop_after_tp2':0,
-            'stop_after_tp1':0,'stop_before_tp1':0
-        })
-        cat=(
-            'stop_after_tp2' if p.get('tp2_hit')
-            else 'stop_after_tp1' if p.get('tp1_hit')
-            else 'stop_before_tp1'
-        )
-        st[cat]=int(st.get(cat,0))+1
-        msg=(
-            f"🛑 <b>GOLD V{V} | 모의 종료: SL</b>\n"
-            f"{d} · 진입 {money(p['entry'])}\n"
-            f"체크 가격 {money(price)} · SL {money(sl)}\n"
-            f"최고 도달 목표: "
-            f"{'TP2' if p.get('tp2_hit') else 'TP1' if p.get('tp1_hit') else '없음'}\n"
-            f"⚠️ 5분봉 안에서 발생 순서를 확정할 수 없어 보수적으로 처리했습니다.\n"
-            f"🧪 모의 시그널 · {ts()}\n"
-            f"<a href='{TV}'>TradingView GC1! 차트</a>"
-        )
-        queue(s,key('SL',p),msg,'SL')
-        log('exit',reason='SL',price=price,position=p)
-        s['status']='IDLE'
-        s['position']=None
-        s['cooldown_until']=(now()+timedelta(minutes=30)).isoformat()
-        write(SF,s)
-        queue_stats(s)
+        close_position(s,p,"SL",p["sl"])
         return
 
-    r=m5.iloc[-7:]
-    atr=float(r.atr.iloc[-1])
-    if not np.isfinite(atr) or atr<=0:
-        atr=float(p.get('entry_atr',1.0))
+    def target_hit(target):
+        return hi>=target if side=="LONG" else lo<=target
 
-    if tp1_hit:
-        p['tp1_hit']=True
-        # 보호 SL은 LONG은 위로만, SHORT는 아래로만 이동
-        if d=='LONG':
-            candidate=min(
-                max(float(p['entry'])+0.05*atr,
-                    float(r.low.min())-0.15*atr),
-                price-0.15*atr
+    for n in (1,2,3):
+        flag=f"tp{n}_hit"
+        target=p[f"tp{n}"]
+        if not p[flag] and target_hit(target):
+            p[flag]=True
+            msg=(
+                f"🎯 <b>GOLD TP{n} 도달 알림</b>\n"
+                f"방향: {side}\n기준 목표가: <b>{target:.2f}</b>\n"
+                f"기준 진입가: {p['entry']:.2f}\n"
+                "이 알림 자체는 시그널 종료가 아닙니다."
             )
-            p['sl']=max(float(p['sl']),candidate)
-        else:
-            candidate=max(
-                min(float(p['entry'])-0.05*atr,
-                    float(r.high.max())+0.15*atr),
-                price+0.15*atr
-            )
-            p['sl']=min(float(p['sl']),candidate)
-
-        queue(
-            s,key('TP1',p),
-            f"✅ <b>GOLD V{V} | TP1 도달</b>\n"
-            f"{d} · 현재가 {money(price)} · TP1 {money(tp1)}\n"
-            f"보호 SL: {money(p['sl'])}\n"
-            f"포지션 유지: TP2/TP3 또는 SL까지 신규 진입 차단.\n"
-            f"🧪 모의 시그널 · {ts()}\n"
-            f"<a href='{TV}'>TradingView GC1! 차트</a>",
-            'TP1'
-        )
-
-    if tp2_hit:
-        p['tp2_hit']=True
-        if d=='LONG':
-            candidate=min(float(r.low.min())-0.10*atr,price-0.10*atr)
-            p['sl']=max(float(p['sl']),candidate)
-        else:
-            candidate=max(float(r.high.max())+0.10*atr,price+0.10*atr)
-            p['sl']=min(float(p['sl']),candidate)
-
-        queue(
-            s,key('TP2',p),
-            f"🎯 <b>GOLD V{V} | TP2 도달</b>\n"
-            f"{d} · 현재가 {money(price)} · TP2 {money(tp2)}\n"
-            f"보호 SL: {money(p['sl'])}\n"
-            f"포지션 유지: TP3 또는 SL까지 신규 진입 차단.\n"
-            f"🧪 모의 시그널 · {ts()}\n"
-            f"<a href='{TV}'>TradingView GC1! 차트</a>",
-            'TP2'
-        )
-
-    if tp3_hit:
-        st=s.setdefault('stats',{
-            'tp3':0,'stop_after_tp2':0,
-            'stop_after_tp1':0,'stop_before_tp1':0
-        })
-        st['tp3']=int(st.get('tp3',0))+1
-        queue(
-            s,key('TP3',p),
-            f"🏁 <b>GOLD V{V} | TP3 최종 종료</b>\n"
-            f"{d} · 진입 {money(p['entry'])} · TP3 {money(tp3)}\n"
-            f"체크 가격 {money(price)}\n"
-            f"포지션 잠금 해제. 실제 주문/체결은 아닙니다.\n"
-            f"🕒 {ts()}\n"
-            f"<a href='{TV}'>TradingView GC1! 차트</a>",
-            'TP3'
-        )
-        log('exit',reason='TP3',price=price,position=p)
-        s['status']='IDLE'
-        s['position']=None
-        s['cooldown_until']=(now()+timedelta(minutes=10)).isoformat()
-        queue_stats(s)
-    else:
-        s['position']=p
-    write(SF,s)
+            queue(s,f"TP{n}-{p['id']}",msg,f"TP{n}")
+            if n==1:
+                p["sl"]=max(p["sl"],p["entry"]) if side=="LONG" else min(p["sl"],p["entry"])
+            elif n==2:
+                p["sl"]=max(p["sl"],p["entry"]) if side=="LONG" else min(p["sl"],p["entry"])
+            if n==3:
+                save(s)
+                close_position(s,p,"TP3",target)
+                return
+    save(s)
 
 def main():
-    print(f'GOLD SMART SIGNAL BOT V{V} PAPER ONLY | {ts()}')
-    s=valid_state(read(SF,blank()))
-
-    # Telegram 설정이 빠진 경우 시그널만 생성하고 전송 실패하는 상황 방지
-    if not TOKEN or not CHAT:
-        raise RuntimeError('TELEGRAM_TOKEN / TELEGRAM_CHAT_ID Secrets 설정을 확인하세요.')
-
-    frames=[
-        bars('60d','1h'),
-        bars('30d','15m'),
-        bars('10d','5m')
-    ]
-    if min(map(len,frames))<60:
-        log('data_error',lengths=list(map(len,frames)))
-        raise RuntimeError('GC=F 데이터가 부족하거나 Yahoo Finance 요청에 실패했습니다.')
-
-    h,m,n=[indic(x) for x in frames]
-    c=last(n)
-    if c is None:
-        raise RuntimeError('지표 계산에 필요한 데이터가 부족합니다.')
-
-    price=float(c.close)
-    print(
-        f'Price={price:.2f} RSI={c.rsi:.1f} '
-        f'ATR={c.atr:.2f} ADX={c.adx:.1f}'
-    )
-
-    # 활성 포지션이 있다면 새 시그널을 절대 생성하지 않음
-    if s['status']=='ACTIVE':
-        print('ACTIVE position: new entry blocked')
-        monitor(s,price,n)
-        flush(s)
-        return
-
-    cd=s.get('cooldown_until')
-    if cd:
-        try:
-            if now()<datetime.fromisoformat(cd):
-                print('Cooldown until',cd)
-                flush(s)
-                return
-        except Exception:
-            s['cooldown_until']=None
-
-    direction,info=signal(h,m,n)
-    print('Signal:',direction,'scores:',info.get('scores'))
-
-    if not direction:
-        log('no_signal',price=price,info=info)
-        write(SF,s)
-        flush(s)
-        return
-
-    if info['bar']==s.get('last_signal_bar'):
-        log('duplicate_bar_ignored',bar=info['bar'])
-        flush(s)
-        return
-
-    atr=float(info['atr'])
-    if atr<=0 or atr/price>0.012:
-        log('signal_rejected_volatility',price=price,atr=atr)
-        flush(s)
-        return
-
-    # 손절 폭은 ATR 기준, 목표가는 초기 위험 R의 배수
-    risk=max(1.15*atr,1.0)
-    if direction=='LONG':
-        sl=price-risk
-        tp1=price+1.2*risk
-        tp2=price+2.0*risk
-        tp3=price+3.0*risk
-    else:
-        sl=price+risk
-        tp1=price-1.2*risk
-        tp2=price-2.0*risk
-        tp3=price-3.0*risk
-
-    p={
-        'id':f"{direction}-{now().strftime('%Y%m%d%H%M%S')}",
-        'direction':direction,
-        'entry':price,
-        'sl':sl,
-        'initial_sl':sl,
-        'tp1':tp1,
-        'tp2':tp2,
-        'tp3':tp3,
-        'risk':risk,
-        'entry_atr':atr,
-        'entry_time':ts(),
-        'entry_bar':info['bar'],
-        'tp1_hit':False,
-        'tp2_hit':False,
-        'score':info['scores'][direction],
-        'entry_info':info
-    }
-
-    # 먼저 상태를 ACTIVE로 저장해 중복 진입을 막음
-    s['status']='ACTIVE'
-    s['position']=p
-    s['last_signal_bar']=info['bar']
-    queue(s,key('ENTRY',p),entry_msg(p,info),'ENTRY')
-    write(SF,s)
-    log('position_entry',position=p)
+    print(f"GOLD SMART SIGNAL BOT V{VERSION} PAPER ONLY | {stamp()}",flush=True)
+    s=load_state()
+    # 기존 대기 알림 먼저 재전송
     flush(s)
-    print('Entry saved; position lock engaged')
+    if s["pending_alerts"]:
+        print("알림 전송 대기 중: 텔레그램 설정/네트워크 확인 필요",flush=True)
+        return
 
-if __name__=='__main__':
-    main()
+    if s["status"]=="ACTIVE" and s.get("position"):
+        monitor(s)
+        flush(s)
+        return
+
+    if s.get("cooldown_until"):
+        try:
+            if now()<datetime.fromisoformat(s["cooldown_until"]):
+                print("Cooldown active",flush=True)
+                return
+        except ValueError:
+            log("invalid_cooldown",value=s["cooldown_until"])
+
+    direction,info=get_signal()
+    print(
+        f"Price={info['price']:.2f} RSI={info['rsi']:.1f} "
+        f"ATR={info['atr']:.2f} ADX={info['adx']:.1f}",flush=True
+    )
+    print(f"Signal: {direction} scores: LONG={info['long_score']} SHORT={info['short_score']}",flush=True)
+    if not direction:
+        log("no_signal",**info)
+        save(s)
+        return
+
+    if s.get("last_signal_bar")==info["bar"]:
+        print("Duplicate signal bar ignored",flush=True)
+        return
+
+    entry=info["price"]
+    risk=info["atr"]*1.35
+    if risk<=0:
+        raise RuntimeError("손절 폭 계산 오류")
+    sign=1 if direction=="LONG" else -1
+    p={
+        "id":str(int(time.time())),
+        "side":direction,"entry":entry,
+        "sl":entry-sign*risk,
+        "tp1":entry+sign*risk*TP1_R,
+        "tp2":entry+sign*risk*TP2_R,
+        "tp3":entry+sign*risk*TP3_R,
+        "tp1_hit":False,"tp2_hit":False,"tp3_hit":False,
+        "entry_time":stamp(),"entry_bar":info["bar"]
+    }
+    s["status"]="ACTIVE"
+    s["position"]=p
+    s["last_signal_bar"]=info["bar"]
+    save(s)
+    queue(s,f"ENTRY-{p['id']}",entry_message(p,info),"ENTRY")
+    flush(s)
+    print("Entry state saved; alert queue processed.",flush=True)
+
+if __name__=="__main__":
+    try:
+        main()
+    except Exception as e:
+        print(f"FATAL ERROR: {type(e).__name__}: {e}",flush=True)
+        log("fatal_error",error=f"{type(e).__name__}: {e}")
+        raise
