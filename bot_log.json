@@ -1971,5 +1971,17 @@
     "event": "alert_sent",
     "key": "STATS-1792680636",
     "alert_type": "STATS"
+  },
+  {
+    "time": "2026-10-23T05:15:43+09:00",
+    "event": "alert_queued",
+    "key": "ENTRY-1792700143",
+    "alert_type": "ENTRY"
+  },
+  {
+    "time": "2026-10-23T05:15:45+09:00",
+    "event": "alert_sent",
+    "key": "ENTRY-1792700143",
+    "alert_type": "ENTRY"
   }
 ]
