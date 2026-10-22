@@ -4,7 +4,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 import requests, numpy as np, pandas as pd, yfinance as yf
 
-VERSION = "15.3.2"
+VERSION = "15.3.3"
 TZ = ZoneInfo("Asia/Seoul")
 SYMBOL = "GC=F"
 TV = "https://www.tradingview.com/symbols/GC1!/"
@@ -129,18 +129,20 @@ def stats_message(s):
     total = sum(st.get(k, 0) for k in (
         "tp3", "stop_after_tp2", "stop_after_tp1", "stop_before_tp1"
     ))
-    rate = 100 * st.get("tp3", 0) / total if total else 0
+    # 실전형 승률: TP3 + TP2방어 + TP1방어(수익 실현 성공 건수)를 모두 승리로 합산
+    success_wins = st.get("tp3", 0) + st.get("stop_after_tp2", 0) + st.get("stop_after_tp1", 0)
+    rate = 100 * success_wins / total if total else 0
     return (
-        "📊 <b>골드 시그널 누적 통계 (V15.3.2)</b>\n"
+        "📊 <b>골드 시그널 실전 누적 통계 (V15.3.3)</b>\n"
         "━━━━━━━━━━━━━━\n"
         f"총 종료된 시그널: <b>{total}건</b>\n"
         f"🎯 TP3 최종 익절: {st.get('tp3', 0)}건\n"
         f"🛡 TP2 도달 후 방어 종료: {st.get('stop_after_tp2', 0)}건\n"
         f"🛡 TP1 도달 후 방어 종료: {st.get('stop_after_tp1', 0)}건\n"
         f"🛑 TP1 미달 전 손절: {st.get('stop_before_tp1', 0)}건\n"
-        f"📈 TP3 기준 최종 승률: <b>{rate:.1f}%</b>\n"
+        f"📈 <b>실전 수익 실현 승률: {rate:.1f}%</b>\n"
         "━━━━━━━━━━━━━━\n"
-        "<i>역추세 차단 필터 적용 버전</i>"
+        "<i>(TP1 이상 도달 및 수익 방어 성공 기준)</i>"
     )
 
 def get_bars(interval, period):
@@ -238,7 +240,7 @@ def get_signal():
 def entry_message(p, info):
     side = "🟢 롱 (LONG) 매수 추세 진입" if p["side"] == "LONG" else "🔴 숏 (SHORT) 매도 추세 진입"
     return (
-        "🥇 <b>골드 선물 스마트 시그널 V15.3.2</b>\n"
+        "🥇 <b>골드 선물 스마트 시그널 V15.3.3</b>\n"
         "━━━━━━━━━━━━━━\n"
         f"{side}\n"
         f"진입 기준가: <b>{p['entry']:.2f}</b>\n"
@@ -333,7 +335,7 @@ def main():
         monitor(s)
         flush(s)
         return
-    if s.get("cooldown_until"):
+    if s["cooldown_until"]:
         try:
             if now() < datetime.fromisoformat(s["cooldown_until"]):
                 print("쿨다운 대기 중", flush=True)
