@@ -1983,5 +1983,17 @@
     "event": "alert_sent",
     "key": "ENTRY-1792700143",
     "alert_type": "ENTRY"
+  },
+  {
+    "time": "2026-10-23T05:30:44+09:00",
+    "event": "alert_queued",
+    "key": "TP1-1792700143",
+    "alert_type": "TP1"
+  },
+  {
+    "time": "2026-10-23T05:30:46+09:00",
+    "event": "alert_sent",
+    "key": "TP1-1792700143",
+    "alert_type": "TP1"
   }
 ]
