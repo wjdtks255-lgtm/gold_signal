@@ -1887,5 +1887,17 @@
     "event": "alert_sent",
     "key": "STATS-1792672242",
     "alert_type": "STATS"
+  },
+  {
+    "time": "2026-10-22T23:50:36+09:00",
+    "event": "alert_queued",
+    "key": "ENTRY-1792680636",
+    "alert_type": "ENTRY"
+  },
+  {
+    "time": "2026-10-22T23:50:38+09:00",
+    "event": "alert_sent",
+    "key": "ENTRY-1792680636",
+    "alert_type": "ENTRY"
   }
 ]
