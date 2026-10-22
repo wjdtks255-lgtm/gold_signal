@@ -1899,5 +1899,17 @@
     "event": "alert_sent",
     "key": "ENTRY-1792680636",
     "alert_type": "ENTRY"
+  },
+  {
+    "time": "2026-10-23T01:20:36+09:00",
+    "event": "alert_queued",
+    "key": "TP1-1792680636",
+    "alert_type": "TP1"
+  },
+  {
+    "time": "2026-10-23T01:20:38+09:00",
+    "event": "alert_sent",
+    "key": "TP1-1792680636",
+    "alert_type": "TP1"
   }
 ]
