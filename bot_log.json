@@ -1995,5 +1995,41 @@
     "event": "alert_sent",
     "key": "TP1-1792700143",
     "alert_type": "TP1"
+  },
+  {
+    "time": "2026-10-23T07:30:45+09:00",
+    "event": "alert_queued",
+    "key": "EXIT-1792700143",
+    "alert_type": "EXIT"
+  },
+  {
+    "time": "2026-10-23T07:30:45+09:00",
+    "event": "alert_queued",
+    "key": "STATS-1792700143",
+    "alert_type": "STATS"
+  },
+  {
+    "time": "2026-10-23T07:30:45+09:00",
+    "event": "position_closed",
+    "reason": "SL",
+    "side": "SHORT",
+    "stats": {
+      "tp3": 2,
+      "stop_after_tp2": 0,
+      "stop_after_tp1": 2,
+      "stop_before_tp1": 1
+    }
+  },
+  {
+    "time": "2026-10-23T07:30:47+09:00",
+    "event": "alert_sent",
+    "key": "EXIT-1792700143",
+    "alert_type": "EXIT"
+  },
+  {
+    "time": "2026-10-23T07:30:49+09:00",
+    "event": "alert_sent",
+    "key": "STATS-1792700143",
+    "alert_type": "STATS"
   }
 ]
