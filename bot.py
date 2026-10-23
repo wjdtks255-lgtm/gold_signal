@@ -4,7 +4,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 import requests, numpy as np, pandas as pd, yfinance as yf
 
-VERSION = "15.3.3"
+VERSION = "15.3.5"
 TZ = ZoneInfo("Asia/Seoul")
 SYMBOL = "GC=F"
 TV = "https://www.tradingview.com/symbols/GC1!/"
@@ -126,23 +126,24 @@ def flush(s):
 
 def stats_message(s):
     st = s["stats"]
-    total = sum(st.get(k, 0) for k in (
-        "tp3", "stop_after_tp2", "stop_after_tp1", "stop_before_tp1"
-    ))
-    # 실전형 승률: TP3 + TP2방어 + TP1방어(수익 실현 성공 건수)를 모두 승리로 합산
-    success_wins = st.get("tp3", 0) + st.get("stop_after_tp2", 0) + st.get("stop_after_tp1", 0)
-    rate = 100 * success_wins / total if total else 0
+    wins = st.get("tp3", 0)
+    ties = st.get("stop_after_tp2", 0) + st.get("stop_after_tp1", 0)
+    losses = st.get("stop_before_tp1", 0)
+    
+    total = wins + ties + losses
+    decisive_total = wins + losses  # 무승부를 제외한 순수 승패 건수
+    win_rate = 100 * wins / decisive_total if decisive_total else 0
+    
     return (
-        "📊 <b>골드 시그널 실전 누적 통계 (V15.3.3)</b>\n"
+        "📊 <b>골드 시그널 승무패 통계 (V15.3.5)</b>\n"
         "━━━━━━━━━━━━━━\n"
         f"총 종료된 시그널: <b>{total}건</b>\n"
-        f"🎯 TP3 최종 익절: {st.get('tp3', 0)}건\n"
-        f"🛡 TP2 도달 후 방어 종료: {st.get('stop_after_tp2', 0)}건\n"
-        f"🛡 TP1 도달 후 방어 종료: {st.get('stop_after_tp1', 0)}건\n"
-        f"🛑 TP1 미달 전 손절: {st.get('stop_before_tp1', 0)}건\n"
-        f"📈 <b>실전 수익 실현 승률: {rate:.1f}%</b>\n"
+        f"🟢 승 (TP3 익절): {wins}건\n"
+        f"🟡 무 (본전 방어): {ties}건\n"
+        f"🔴 패 (순수 손절): {losses}건\n"
         "━━━━━━━━━━━━━━\n"
-        "<i>(TP1 이상 도달 및 수익 방어 성공 기준)</i>"
+        f"📈 <b>순수 승률 [승 ÷ (승 + 패)]: {win_rate:.1f}%</b>\n"
+        f"<i>(무승부 {ties}건은 승패 산출에서 제외됨)</i>"
     )
 
 def get_bars(interval, period):
@@ -240,7 +241,7 @@ def get_signal():
 def entry_message(p, info):
     side = "🟢 롱 (LONG) 매수 추세 진입" if p["side"] == "LONG" else "🔴 숏 (SHORT) 매도 추세 진입"
     return (
-        "🥇 <b>골드 선물 스마트 시그널 V15.3.3</b>\n"
+        "🥇 <b>골드 선물 스마트 시그널 V15.3.5</b>\n"
         "━━━━━━━━━━━━━━\n"
         f"{side}\n"
         f"진입 기준가: <b>{p['entry']:.2f}</b>\n"
@@ -260,16 +261,16 @@ def close_position(s, p, reason, price):
     st = s["stats"]
     if reason == "TP3":
         st["tp3"] += 1
-        label = "🎯 TP3 최종 목표가 도달 (익절 완료)"
+        label = "🎯 TP3 최종 목표가 도달 (익절/승)"
     elif p["tp2_hit"]:
         st["stop_after_tp2"] += 1
-        label = "🛡 TP2 도달 후 본절/수익 방어 스탑 종료"
+        label = "🛡 TP2 도달 후 본절 방어 스탑 종료 (무승부)"
     elif p["tp1_hit"]:
         st["stop_after_tp1"] += 1
-        label = "🛡 TP1 도달 후 본절/수익 방어 스탑 종료"
+        label = "🛡 TP1 도달 후 본절 방어 스탑 종료 (무승부)"
     else:
         st["stop_before_tp1"] += 1
-        label = "🛑 TP1 미달 전 손절가(SL) 터치"
+        label = "🛑 TP1 미달 전 손절가(SL) 터치 (패)"
     
     side_kr = "롱 (LONG)" if p["side"] == "LONG" else "숏 (SHORT)"
     msg = (
