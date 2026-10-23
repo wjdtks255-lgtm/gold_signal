@@ -2091,5 +2091,17 @@
     "event": "alert_sent",
     "key": "STATS-1792715449",
     "alert_type": "STATS"
+  },
+  {
+    "time": "2026-10-23T12:00:56+09:00",
+    "event": "alert_queued",
+    "key": "ENTRY-1792724456",
+    "alert_type": "ENTRY"
+  },
+  {
+    "time": "2026-10-23T12:00:58+09:00",
+    "event": "alert_sent",
+    "key": "ENTRY-1792724456",
+    "alert_type": "ENTRY"
   }
 ]
