@@ -2331,5 +2331,17 @@
     "short_score": 5,
     "score": 5,
     "bar": "2026-10-23 09:50:00-04:00"
+  },
+  {
+    "time": "2026-10-23T23:10:37+09:00",
+    "event": "alert_queued",
+    "key": "ENTRY-1792764637",
+    "alert_type": "ENTRY"
+  },
+  {
+    "time": "2026-10-23T23:10:39+09:00",
+    "event": "alert_sent",
+    "key": "ENTRY-1792764637",
+    "alert_type": "ENTRY"
   }
 ]
