@@ -2355,5 +2355,17 @@
     "event": "alert_sent",
     "key": "TP1-1792764637",
     "alert_type": "TP1"
+  },
+  {
+    "time": "2026-10-23T23:25:19+09:00",
+    "event": "alert_queued",
+    "key": "TP2-1792764637",
+    "alert_type": "TP2"
+  },
+  {
+    "time": "2026-10-23T23:25:21+09:00",
+    "event": "alert_sent",
+    "key": "TP2-1792764637",
+    "alert_type": "TP2"
   }
 ]
