@@ -1,22 +1,9 @@
 {
   "version": "15.3.6",
-  "status": "ACTIVE",
-  "position": {
-    "id": "1792764637",
-    "side": "SHORT",
-    "entry": 4037.0,
-    "sl": 4037.0,
-    "tp1": 4028.063250743288,
-    "tp2": 4022.10541790548,
-    "tp3": 4014.65812685822,
-    "tp1_hit": true,
-    "tp2_hit": true,
-    "tp3_hit": false,
-    "entry_time": "2026-10-23T23:10:37+09:00",
-    "entry_bar": "2026-10-23 09:55:00-04:00"
-  },
+  "status": "IDLE",
+  "position": null,
   "last_signal_bar": "2026-10-23 09:55:00-04:00",
-  "cooldown_until": "2026-10-23T22:40:32.757623+09:00",
+  "cooldown_until": "2026-10-24T00:30:45.126569+09:00",
   "pending_alerts": [],
   "sent_event_keys": [
     "ENTRY-1792637104",
@@ -58,10 +45,13 @@
     "STATS-1792748736",
     "ENTRY-1792764637",
     "TP1-1792764637",
-    "TP2-1792764637"
+    "TP2-1792764637",
+    "TP3-1792764637",
+    "EXIT-1792764637",
+    "STATS-1792764637"
   ],
   "stats": {
-    "tp3": 2,
+    "tp3": 3,
     "stop_after_tp2": 0,
     "stop_after_tp1": 4,
     "stop_before_tp1": 3

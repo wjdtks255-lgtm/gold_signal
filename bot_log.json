@@ -2367,5 +2367,53 @@
     "event": "alert_sent",
     "key": "TP2-1792764637",
     "alert_type": "TP2"
+  },
+  {
+    "time": "2026-10-23T23:30:44+09:00",
+    "event": "alert_queued",
+    "key": "TP3-1792764637",
+    "alert_type": "TP3"
+  },
+  {
+    "time": "2026-10-23T23:30:45+09:00",
+    "event": "alert_queued",
+    "key": "EXIT-1792764637",
+    "alert_type": "EXIT"
+  },
+  {
+    "time": "2026-10-23T23:30:45+09:00",
+    "event": "alert_queued",
+    "key": "STATS-1792764637",
+    "alert_type": "STATS"
+  },
+  {
+    "time": "2026-10-23T23:30:45+09:00",
+    "event": "position_closed",
+    "reason": "TP3",
+    "side": "SHORT",
+    "stats": {
+      "tp3": 3,
+      "stop_after_tp2": 0,
+      "stop_after_tp1": 4,
+      "stop_before_tp1": 3
+    }
+  },
+  {
+    "time": "2026-10-23T23:30:47+09:00",
+    "event": "alert_sent",
+    "key": "TP3-1792764637",
+    "alert_type": "TP3"
+  },
+  {
+    "time": "2026-10-23T23:30:49+09:00",
+    "event": "alert_sent",
+    "key": "EXIT-1792764637",
+    "alert_type": "EXIT"
+  },
+  {
+    "time": "2026-10-23T23:30:50+09:00",
+    "event": "alert_sent",
+    "key": "STATS-1792764637",
+    "alert_type": "STATS"
   }
 ]
